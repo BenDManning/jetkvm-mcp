@@ -13,7 +13,7 @@ JetKVM MCP is a conventional Go program that operates JetKVM devices through MCP
 - Keep logs and diagnostics on stderr; reserve stdio-server stdout for MCP protocol traffic.
 - Automated tests do not qualify physical compatibility; do not access physical hardware unless the task explicitly authorizes it.
 - Keep credentials, device data, and generated artifacts out of source control.
-- Use [README.md](README.md) for setup and operation, [docs/product-contract.md](docs/product-contract.md) before behavior changes, and [docs/protocol-sources.md](docs/protocol-sources.md) before protocol work or selective reuse.
+- Use [README.md](README.md) for setup and operation, [docs/product-contract.md](docs/product-contract.md) before behavior changes, [docs/adr/README.md](docs/adr/README.md) before architecture changes, and [docs/protocol-sources.md](docs/protocol-sources.md) before protocol work or selective reuse.
 
 ## Work tracking and delivery
 
