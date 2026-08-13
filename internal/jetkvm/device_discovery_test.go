@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"git.home.benmanning.xyz/ben/jetkvm-mcp/internal/mcpserver"
+	"github.com/BenDManning/jetkvm-mcp/internal/mcpserver"
 )
 
 type discoveryProvider struct {

@@ -62,11 +62,11 @@ func TestRunVersionDoesNotRequireConfig(t *testing.T) {
 
 func TestResolveVersionUsesReleaseModuleAndDevelopmentProvenance(t *testing.T) {
 	installed := &debug.BuildInfo{Main: debug.Module{
-		Path:    "git.home.benmanning.xyz/ben/jetkvm-mcp",
+		Path:    "github.com/BenDManning/jetkvm-mcp",
 		Version: "v1.2.3",
 	}}
 	development := &debug.BuildInfo{
-		Main: debug.Module{Path: "git.home.benmanning.xyz/ben/jetkvm-mcp", Version: "v0.1.1-0.20260813152351-0123456789ab"},
+		Main: debug.Module{Path: "github.com/BenDManning/jetkvm-mcp", Version: "v0.1.1-0.20260813152351-0123456789ab"},
 		Settings: []debug.BuildSetting{
 			{Key: "vcs.revision", Value: "0123456789abcdef0123456789abcdef01234567"},
 			{Key: "vcs.modified", Value: "true"},

@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"git.home.benmanning.xyz/ben/jetkvm-mcp/internal/mcpserver"
+	"github.com/BenDManning/jetkvm-mcp/internal/mcpserver"
 )
 
 const hidReleaseTimeout = 2 * time.Second
