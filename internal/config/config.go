@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"git.home.benmanning.xyz/ben/jetkvm-mcp/internal/httporigin"
-	"git.home.benmanning.xyz/ben/jetkvm-mcp/internal/jetkvm"
+	"github.com/BenDManning/jetkvm-mcp/internal/httporigin"
+	"github.com/BenDManning/jetkvm-mcp/internal/jetkvm"
 	"gopkg.in/yaml.v3"
 )
 

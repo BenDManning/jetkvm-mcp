@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"git.home.benmanning.xyz/ben/jetkvm-mcp/internal/httporigin"
+	"github.com/BenDManning/jetkvm-mcp/internal/httporigin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

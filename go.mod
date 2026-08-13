@@ -1,4 +1,4 @@
-module git.home.benmanning.xyz/ben/jetkvm-mcp
+module github.com/BenDManning/jetkvm-mcp
 
 go 1.25.0
 

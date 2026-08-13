@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"git.home.benmanning.xyz/ben/jetkvm-mcp/internal/httporigin"
-	"git.home.benmanning.xyz/ben/jetkvm-mcp/internal/mcpserver"
+	"github.com/BenDManning/jetkvm-mcp/internal/httporigin"
+	"github.com/BenDManning/jetkvm-mcp/internal/mcpserver"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"git.home.benmanning.xyz/ben/jetkvm-mcp/internal/mcpserver"
+	"github.com/BenDManning/jetkvm-mcp/internal/mcpserver"
 )
 
 func TestManagerKeyboardUsesNumericHIDReportsAndRelease(t *testing.T) {
