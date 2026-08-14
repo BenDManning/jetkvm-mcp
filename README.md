@@ -230,6 +230,9 @@ deployment requirements, and residual risks are recorded in
 [`docs/threat-model.md`](docs/threat-model.md). The bounded stderr-only operation
 telemetry schema, stage boundaries, privacy exclusions, and fixture-only
 verification scope are documented in [`docs/telemetry.md`](docs/telemetry.md).
+The canonical GitHub Actions/local quality matrix, minimum and release Go
+lanes, analyzer pins, fuzz/protocol gates, and coverage evidence policy are in
+[`docs/ci-quality.md`](docs/ci-quality.md).
 
 ```sh
 go test -race ./...
