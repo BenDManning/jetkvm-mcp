@@ -9,7 +9,6 @@ JetKVM MCP is a conventional Go program that operates JetKVM devices through MCP
 
 ## Working rules
 
-- Implement behavior in vertical RED-GREEN-REFACTOR slices: run the focused failing test first, then the focused and full checks after implementation.
 - Keep logs and diagnostics on stderr; reserve stdio-server stdout for MCP protocol traffic.
 - Automated tests do not qualify physical compatibility; do not access physical hardware unless the task explicitly authorizes it.
 - Keep credentials, device data, and generated artifacts out of source control.
@@ -21,3 +20,17 @@ JetKVM MCP is a conventional Go program that operates JetKVM devices through MCP
 - Before stopping, run checks for changed surfaces, commit only intended paths, update the issue and roadmap, and leave a durable handoff with the worktree, branch, exact commit, last verified command and result, blocker, and next action.
 - Once branch publication is authorized, do not stop at "ready to push": push the exact branch, verify its remote head and CI, and update or close the issue. If publication is unauthorized or fails, preserve a checkpoint and do not claim delivery.
 - Do not prescribe or perform blanket rebases, stash clearing, branch pruning, merges, releases, deployments, or issue closure without checking live state and applicable authority.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `BenDManning/jetkvm-mcp`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the repository's existing label vocabulary; unconfigured roles require maintainer direction. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repository. See `docs/agents/domain.md`.
