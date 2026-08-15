@@ -6,7 +6,7 @@ Issues and specs live in GitHub Issues.
 - CLI: `gh`
 - Pull requests as a triage request surface: no
 
-Read tickets, including their comments, with `gh issue view <number> --comments`. Create or change issues only when the current task explicitly authorizes that tracker write.
+Read complete tickets in non-interactive sessions with `gh issue view <number> --json number,title,body,state,stateReason,author,labels,assignees,milestone,createdAt,updatedAt,closedAt,url,comments`. Create or change issues only when the current task explicitly authorizes that tracker write.
 
 Preserve the existing label vocabulary. Do not create, rename, or delete GitHub labels without maintainer approval.
 
@@ -20,4 +20,16 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 - **Blocking**: GitHub's **native issue dependencies** — the canonical, UI-visible representation. Add an edge with `gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`, where `<blocker-db-id>` is the blocker's numeric **database id** (`gh api repos/<owner>/<repo>/issues/<n> --jq .id`, _not_ the `#number` or `node_id`). GitHub reports `issue_dependencies_summary.blocked_by` (open blockers only — the live gate). Where dependencies aren't available, fall back to a `Blocked by: #<n>, #<n>` line at the top of the child body. A ticket is unblocked when every blocker is closed.
 - **Frontier query**: for the named map, run `gh api --paginate --slurp 'repos/{owner}/{repo}/issues/<map>/sub_issues?per_page=100' | jq -r 'add | map(select(.state == "open" and (.assignees | length == 0))) | .[].number'`; this preserves child order and yields open, unassigned candidates. For each candidate in order, run `gh api --paginate --slurp 'repos/{owner}/{repo}/issues/<child>/dependencies/blocked_by?per_page=100' | jq -r 'add | any(.[]; .state == "open")'`; the first candidate returning `false` is the frontier. Where sub-issues aren't available, read only the named map's body with `gh issue view <map> --json body --jq .body`, parse its task-list children in body order, and discard assigned children or children whose `Blocked by:` references include an open issue. Never use repository-wide issue order.
 - **Claim**: `gh issue edit <n> --add-assignee @me` — the session's first write.
-- **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+- **Resolve**: use the safe resolution sequence below.
+
+### Safe resolution sequence
+
+Choose a quoted heredoc delimiter that does not occur on a line in the answer, then pass the answer verbatim through stdin:
+
+```sh
+gh issue comment <n> --body-file - <<'WAYFINDER_RESOLUTION'
+<answer>
+WAYFINDER_RESOLUTION
+```
+
+After the comment succeeds, run `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
