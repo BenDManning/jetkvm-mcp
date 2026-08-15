@@ -10,7 +10,7 @@ JetKVM MCP is one bounded context: a Go MCP server that operates configured JetK
 - **MCP tool** — a supported MCP operation; raw JetKVM RPC is a separate local diagnostic surface.
 - **Read-only operation** — an operation intended to observe state without changing the appliance or attached host.
 - **Mutation** — an operation that may change appliance, storage, HID, power, network, or attached-host state.
-- **Unknown outcome** — a mutation may have been sent without a conclusive response and must not be blindly retried.
+- **Unknown outcome** — a mutation result meaning the request may have been sent without a conclusive response. It is never retryable and ends the current approved mutation window; state must be re-established through an independent read-only path before any separately approved future attempt.
 - **Virtual media** — media fetched or uploaded for appliance storage or mounting on the attached host.
 
 ## Canonical documents
