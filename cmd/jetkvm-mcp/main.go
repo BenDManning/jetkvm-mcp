@@ -280,7 +280,9 @@ func serveHTTP(ctx context.Context, mcpServer *mcp.Server, address, bearerToken 
 	}
 	httpServer := &http.Server{
 		Handler:           mcpserver.NewHTTPHandler(mcpServer, bearerToken, allowedOrigins...),
-		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
+		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
 	fmt.Fprintf(stderr, "jetkvm-mcp: serving MCP Streamable HTTP on %s%s\n", listener.Addr(), mcpserver.MCPPath)
 	done := make(chan error, 1)
@@ -293,12 +295,27 @@ func serveHTTP(ctx context.Context, mcpServer *mcp.Server, address, bearerToken 
 		return err
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			return err
+		shutdownErr := httpServer.Shutdown(shutdownCtx)
+		cancel()
+		if shutdownErr != nil {
+			closeErr := httpServer.Close()
+			serveErr := <-done
+			if closeErr != nil {
+				return closeErr
+			}
+			if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				return serveErr
+			}
+			if !errors.Is(shutdownErr, context.DeadlineExceeded) {
+				return shutdownErr
+			}
+			return nil
 		}
-		<-done
-		return nil
+		err := <-done
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	}
 }
 
