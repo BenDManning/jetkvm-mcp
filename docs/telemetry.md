@@ -45,9 +45,10 @@ states whether any completed sink write returned an error. Its outcome is
 `failed` when either value indicates loss and `succeeded` otherwise. A blocked
 or permanently failed sink can also prevent the summary itself from being
 retained; the one-second application close deadline still bounds shutdown. If
-writing the summary itself reports a failure, the recorder makes one corrective
-attempt with the same correlation ID and `writer_failed=true`; this attempt is
-also bounded and may be absent when the sink remains unavailable.
+writing the summary itself reports a failure, the recorder makes one attempt to
+append a distinct `telemetry_writer_failure` event with the same correlation ID.
+This attempt is also bounded and may be absent when the sink remains
+unavailable; it never rewrites or contradicts an already retained summary.
 
 All stages of one operation share its correlation ID. Stage timing measures the
 existing boundary without moving or changing that boundary:

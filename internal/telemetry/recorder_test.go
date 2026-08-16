@@ -349,20 +349,23 @@ func TestRecorderCorrectsFailureReportedBySummaryWrite(t *testing.T) {
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(writer.output.Bytes()))
-	var last shutdownEvent
+	var summary shutdownEvent
+	var failure event
 	for {
-		var got shutdownEvent
+		var got event
 		if err := decoder.Decode(&got); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
 			t.Fatal(err)
 		}
 		if got.Code == "telemetry_summary" {
-			last = got
+			summary.event = got
+		} else if got.Code == "telemetry_writer_failure" {
+			failure = got
 		}
 	}
-	if writer.writes != 3 || !last.WriterFailed || last.Outcome != OutcomeFailed {
-		t.Fatalf("writes=%d final summary=%#v", writer.writes, last)
+	if writer.writes != 3 || summary.Outcome != OutcomeSucceeded || summary.WriterFailed || failure.Outcome != OutcomeFailed || failure.CorrelationID == "" || failure.CorrelationID != summary.CorrelationID {
+		t.Fatalf("writes=%d summary=%#v failure=%#v", writer.writes, summary, failure)
 	}
 }
 

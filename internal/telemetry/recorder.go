@@ -233,7 +233,7 @@ func validStage(value string) bool {
 
 func validCode(value string) bool {
 	switch value {
-	case CodeSuccess, "operation_failed", "canceled", "timeout", "invalid_input", "busy", "authentication_failed", "device_unavailable", "video_unavailable", "no_signal", "protocol_error", "telemetry_summary":
+	case CodeSuccess, "operation_failed", "canceled", "timeout", "invalid_input", "busy", "authentication_failed", "device_unavailable", "video_unavailable", "no_signal", "protocol_error", "telemetry_summary", "telemetry_writer_failure":
 		return true
 	default:
 		return false
@@ -334,9 +334,10 @@ func (recorder *Recorder) writeShutdownSummary() {
 	}
 
 	// A sink can accept the summary bytes and still report an error. Make one
-	// bounded corrective attempt so a recovering sink can retain that evidence.
+	// bounded attempt to record that later failure as a distinct event so the
+	// already-retained summary is not contradicted.
 	recorder.writerFailed.Store(true)
-	line = recorder.shutdownSummaryLine(correlationID)
+	line = recorder.writerFailureLine(correlationID)
 	_, _ = recorder.writer.Write(line)
 }
 
@@ -355,6 +356,21 @@ func (recorder *Recorder) shutdownSummaryLine(correlationID string) []byte {
 		},
 		DroppedEvents: recorder.droppedEvents.Load(),
 		WriterFailed:  recorder.writerFailed.Load(),
+	}
+	line, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return append(line, '\n')
+}
+
+func (recorder *Recorder) writerFailureLine(correlationID string) []byte {
+	value := event{
+		Schema: schemaVersion, Time: time.Now().UTC().Format(time.RFC3339Nano),
+		ProcessInstanceID: recorder.processInstanceID, ServerVersion: recorder.serverVersion,
+		CorrelationID: correlationID, Transport: recorder.transport,
+		Operation: OperationLifecycle, Stage: StageShutdown,
+		Code: "telemetry_writer_failure", Outcome: OutcomeFailed,
 	}
 	line, err := json.Marshal(value)
 	if err != nil {

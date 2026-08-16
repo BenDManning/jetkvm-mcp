@@ -234,6 +234,8 @@ type slowTelemetryWriter struct {
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
+	mu      sync.Mutex
+	output  bytes.Buffer
 }
 
 func (writer *slowTelemetryWriter) Write(data []byte) (int, error) {
@@ -241,7 +243,15 @@ func (writer *slowTelemetryWriter) Write(data []byte) (int, error) {
 		close(writer.started)
 		<-writer.release
 	})
-	return len(data), nil
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.output.Write(data)
+}
+
+func (writer *slowTelemetryWriter) bytes() []byte {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return bytes.Clone(writer.output.Bytes())
 }
 
 func TestMCPResultIgnoresFailingTelemetrySink(t *testing.T) {
@@ -284,8 +294,8 @@ func TestMCPResultDoesNotWaitForSlowTelemetrySink(t *testing.T) {
 			}
 			select {
 			case err := <-callDone:
-				close(writer.release)
 				if err != nil {
+					close(writer.release)
 					t.Fatal(err)
 				}
 			case <-time.After(100 * time.Millisecond):
@@ -293,8 +303,78 @@ func TestMCPResultDoesNotWaitForSlowTelemetrySink(t *testing.T) {
 				<-callDone
 				t.Fatal("slow telemetry sink delayed MCP result")
 			}
+			closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+			started := time.Now()
+			err := recorder.Close(closeCtx)
+			cancel()
+			close(writer.release)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Close error = %v, want deadline exceeded", err)
+			}
+			if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+				t.Fatalf("Close took %v after its deadline", elapsed)
+			}
+		})
+	}
+}
+
+func TestTransportPressureReportsLossAndKeepsJSONLines(t *testing.T) {
+	const queueCapacity = 256
+	for _, transport := range []string{telemetry.TransportStdio, telemetry.TransportHTTP} {
+		t.Run(transport, func(t *testing.T) {
+			writer := &slowTelemetryWriter{started: make(chan struct{}), release: make(chan struct{})}
+			recorder := telemetry.New(writer, "test")
+			client, cleanup := connectTelemetryClient(t, transport, recorder, &telemetryDevice{})
+			defer cleanup()
+			call := func() {
+				result, err := client.CallTool(context.Background(), &mcp.CallToolParams{Name: ListDevicesToolName})
+				if err != nil || result == nil || result.IsError {
+					t.Fatalf("CallTool = %#v, %v", result, err)
+				}
+			}
+			call()
+			select {
+			case <-writer.started:
+			case <-time.After(time.Second):
+				close(writer.release)
+				t.Fatal("telemetry sink was not invoked")
+			}
+			for index := 0; index < 2*queueCapacity+8; index++ {
+				call()
+			}
+			close(writer.release)
 			if err := recorder.Close(context.Background()); err != nil {
 				t.Fatal(err)
+			}
+
+			decoder := json.NewDecoder(bytes.NewReader(writer.bytes()))
+			toolEvents := 0
+			summarySeen := false
+			var droppedEvents uint64
+			writerFailed := false
+			for {
+				var event struct {
+					Stage         string `json:"stage"`
+					Code          string `json:"code"`
+					DroppedEvents uint64 `json:"dropped_events"`
+					WriterFailed  bool   `json:"writer_failed"`
+				}
+				if err := decoder.Decode(&event); errors.Is(err, io.EOF) {
+					break
+				} else if err != nil {
+					t.Fatalf("decode concurrent JSON line: %v", err)
+				}
+				if event.Stage == telemetry.StageTool {
+					toolEvents++
+				}
+				if event.Code == "telemetry_summary" {
+					summarySeen = true
+					droppedEvents = event.DroppedEvents
+					writerFailed = event.WriterFailed
+				}
+			}
+			if toolEvents < 1+2*queueCapacity || !summarySeen || droppedEvents == 0 || writerFailed {
+				t.Fatalf("tool events=%d summary=%v dropped=%d writer_failed=%v", toolEvents, summarySeen, droppedEvents, writerFailed)
 			}
 		})
 	}
