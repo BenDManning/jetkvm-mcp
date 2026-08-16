@@ -347,13 +347,7 @@ func (recorder *Recorder) shutdownSummaryLine(correlationID string) []byte {
 		outcome = OutcomeFailed
 	}
 	value := shutdownEvent{
-		event: event{
-			Schema: schemaVersion, Time: time.Now().UTC().Format(time.RFC3339Nano),
-			ProcessInstanceID: recorder.processInstanceID, ServerVersion: recorder.serverVersion,
-			CorrelationID: correlationID, Transport: recorder.transport,
-			Operation: OperationLifecycle, Stage: StageShutdown,
-			Code: "telemetry_summary", Outcome: outcome,
-		},
+		event:         recorder.shutdownEvent(correlationID, "telemetry_summary", outcome),
 		DroppedEvents: recorder.droppedEvents.Load(),
 		WriterFailed:  recorder.writerFailed.Load(),
 	}
@@ -365,18 +359,21 @@ func (recorder *Recorder) shutdownSummaryLine(correlationID string) []byte {
 }
 
 func (recorder *Recorder) writerFailureLine(correlationID string) []byte {
-	value := event{
-		Schema: schemaVersion, Time: time.Now().UTC().Format(time.RFC3339Nano),
-		ProcessInstanceID: recorder.processInstanceID, ServerVersion: recorder.serverVersion,
-		CorrelationID: correlationID, Transport: recorder.transport,
-		Operation: OperationLifecycle, Stage: StageShutdown,
-		Code: "telemetry_writer_failure", Outcome: OutcomeFailed,
-	}
-	line, err := json.Marshal(value)
+	line, err := json.Marshal(recorder.shutdownEvent(correlationID, "telemetry_writer_failure", OutcomeFailed))
 	if err != nil {
 		return nil
 	}
 	return append(line, '\n')
+}
+
+func (recorder *Recorder) shutdownEvent(correlationID, code, outcome string) event {
+	return event{
+		Schema: schemaVersion, Time: time.Now().UTC().Format(time.RFC3339Nano),
+		ProcessInstanceID: recorder.processInstanceID, ServerVersion: recorder.serverVersion,
+		CorrelationID: correlationID, Transport: recorder.transport,
+		Operation: OperationLifecycle, Stage: StageShutdown,
+		Code: code, Outcome: outcome,
+	}
 }
 
 func newCorrelationID() string {
