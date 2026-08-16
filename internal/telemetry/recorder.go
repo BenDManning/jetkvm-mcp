@@ -271,28 +271,31 @@ func (recorder *Recorder) writeEvents() {
 	for {
 		select {
 		case queued := <-recorder.events:
-			if queued.flush != nil {
-				recorder.drain()
-				recorder.writeShutdownSummary()
-				close(queued.flush)
+			if recorder.handleQueued(queued) {
 				return
 			}
-			recorder.writeQueued(queued)
 		default:
 			select {
 			case queued := <-recorder.events:
-				if queued.flush != nil {
-					recorder.drain()
-					recorder.writeShutdownSummary()
-					close(queued.flush)
+				if recorder.handleQueued(queued) {
 					return
 				}
-				recorder.writeQueued(queued)
 			case queued := <-recorder.terminal:
 				recorder.writeQueued(queued)
 			}
 		}
 	}
+}
+
+func (recorder *Recorder) handleQueued(queued queuedEvent) bool {
+	if queued.flush == nil {
+		recorder.writeQueued(queued)
+		return false
+	}
+	recorder.drain()
+	recorder.writeShutdownSummary()
+	close(queued.flush)
+	return true
 }
 
 func (recorder *Recorder) drain() {
@@ -324,6 +327,20 @@ func (recorder *Recorder) writeShutdownSummary() {
 	if !validTransport(recorder.transport) {
 		return
 	}
+	correlationID := newCorrelationID()
+	line := recorder.shutdownSummaryLine(correlationID)
+	if written, err := recorder.writer.Write(line); err == nil && written == len(line) {
+		return
+	}
+
+	// A sink can accept the summary bytes and still report an error. Make one
+	// bounded corrective attempt so a recovering sink can retain that evidence.
+	recorder.writerFailed.Store(true)
+	line = recorder.shutdownSummaryLine(correlationID)
+	_, _ = recorder.writer.Write(line)
+}
+
+func (recorder *Recorder) shutdownSummaryLine(correlationID string) []byte {
 	outcome := OutcomeSucceeded
 	if recorder.droppedEvents.Load() > 0 || recorder.writerFailed.Load() {
 		outcome = OutcomeFailed
@@ -332,7 +349,7 @@ func (recorder *Recorder) writeShutdownSummary() {
 		event: event{
 			Schema: schemaVersion, Time: time.Now().UTC().Format(time.RFC3339Nano),
 			ProcessInstanceID: recorder.processInstanceID, ServerVersion: recorder.serverVersion,
-			CorrelationID: newCorrelationID(), Transport: recorder.transport,
+			CorrelationID: correlationID, Transport: recorder.transport,
 			Operation: OperationLifecycle, Stage: StageShutdown,
 			Code: "telemetry_summary", Outcome: outcome,
 		},
@@ -341,12 +358,9 @@ func (recorder *Recorder) writeShutdownSummary() {
 	}
 	line, err := json.Marshal(value)
 	if err != nil {
-		return
+		return nil
 	}
-	line = append(line, '\n')
-	if written, err := recorder.writer.Write(line); err != nil || written != len(line) {
-		recorder.writerFailed.Store(true)
-	}
+	return append(line, '\n')
 }
 
 func newCorrelationID() string {

@@ -325,6 +325,47 @@ func (writer *recoveringWriter) Write(data []byte) (int, error) {
 	return writer.output.Write(data)
 }
 
+type summaryFailingWriter struct {
+	writes int
+	output bytes.Buffer
+}
+
+func (writer *summaryFailingWriter) Write(data []byte) (int, error) {
+	writer.writes++
+	written, _ := writer.output.Write(data)
+	if writer.writes == 2 {
+		return written, errors.New("private summary write failure")
+	}
+	return written, nil
+}
+
+func TestRecorderCorrectsFailureReportedBySummaryWrite(t *testing.T) {
+	writer := new(summaryFailingWriter)
+	recorder := New(writer, "test")
+	_, span := recorder.Start(context.Background(), TransportStdio, OperationStatus)
+	span.Record(StageTool, CodeSuccess, OutcomeSucceeded)
+	if err := recorder.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(writer.output.Bytes()))
+	var last shutdownEvent
+	for {
+		var got shutdownEvent
+		if err := decoder.Decode(&got); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if got.Code == "telemetry_summary" {
+			last = got
+		}
+	}
+	if writer.writes != 3 || !last.WriterFailed || last.Outcome != OutcomeFailed {
+		t.Fatalf("writes=%d final summary=%#v", writer.writes, last)
+	}
+}
+
 func TestRecorderCloseReportsDroppedEventsAndWriterFailure(t *testing.T) {
 	writer := &recoveringWriter{started: make(chan struct{}), release: make(chan struct{})}
 	recorder := New(writer, "test")

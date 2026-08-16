@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -163,22 +164,60 @@ func TestHTTPToolTelemetryUsesHTTPTransport(t *testing.T) {
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("CallTool = %#v, %v", result, err)
 	}
+	for _, call := range []mcp.CallToolParams{
+		{Name: CaptureScreenToolName, Arguments: map[string]any{"device": sentinel}},
+		{Name: KeyboardToolName, Arguments: map[string]any{"device": sentinel, "operation": "type_text", "text": sentinel}},
+		{Name: MountVirtualMediaURLToolName, Arguments: map[string]any{"device": sentinel, "url": "https://private.invalid/" + sentinel + ".iso?token=" + sentinel}},
+	} {
+		_, _ = clientSession.CallTool(context.Background(), &call)
+	}
 	_ = clientSession.Close()
 	if err := recorder.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	var event struct {
-		Transport string `json:"transport"`
-		Operation string `json:"operation"`
-		Stage     string `json:"stage"`
+	decoder := json.NewDecoder(&stderr)
+	processID := ""
+	toolSeen, summarySeen := false, false
+	for {
+		var event struct {
+			Schema            string `json:"schema"`
+			Time              string `json:"time"`
+			ProcessInstanceID string `json:"process_instance_id"`
+			ServerVersion     string `json:"server_version"`
+			CorrelationID     string `json:"correlation_id"`
+			Transport         string `json:"transport"`
+			Operation         string `json:"operation"`
+			Stage             string `json:"stage"`
+			Code              string `json:"code"`
+			DroppedEvents     uint64 `json:"dropped_events"`
+			WriterFailed      bool   `json:"writer_failed"`
+		}
+		if err := decoder.Decode(&event); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		parsedTime, err := time.Parse(time.RFC3339Nano, event.Time)
+		if err != nil || !strings.HasSuffix(event.Time, "Z") || time.Since(parsedTime) > time.Minute || event.Schema != "jetkvm.operation.v2" || event.ServerVersion != "test" || !strings.HasPrefix(event.ProcessInstanceID, "proc_") || !strings.HasPrefix(event.CorrelationID, "op_") || event.Transport != telemetry.TransportHTTP {
+			t.Fatalf("event = %#v, time error = %v", event, err)
+		}
+		if processID == "" {
+			processID = event.ProcessInstanceID
+		} else if event.ProcessInstanceID != processID {
+			t.Fatalf("process identity changed from %q to %q", processID, event.ProcessInstanceID)
+		}
+		toolSeen = toolSeen || event.Operation == telemetry.OperationStatus && event.Stage == telemetry.StageTool
+		if event.Code == "telemetry_summary" {
+			summarySeen = true
+			if event.DroppedEvents != 0 || event.WriterFailed {
+				t.Fatalf("unexpected HTTP telemetry loss: %#v", event)
+			}
+		}
 	}
-	if err := json.NewDecoder(&stderr).Decode(&event); err != nil {
-		t.Fatal(err)
+	if !toolSeen || !summarySeen {
+		t.Fatalf("tool=%v summary=%v telemetry=%s", toolSeen, summarySeen, stderr.String())
 	}
-	if event.Transport != telemetry.TransportHTTP || event.Operation != telemetry.OperationStatus || event.Stage != telemetry.StageTool {
-		t.Fatalf("event = %#v", event)
-	}
-	for _, prohibited := range []string{sentinel, "PRIVATE-device", "PRIVATE-firmware", "PRIVATE-raw-config-token"} {
+	for _, prohibited := range []string{sentinel, "PRIVATE-device", "PRIVATE-firmware", "PRIVATE-raw-config-token", "PRIVATE-image-bytes", "https://private.invalid"} {
 		if strings.Contains(stderr.String(), prohibited) {
 			t.Fatalf("HTTP telemetry retained %q: %s", prohibited, stderr.String())
 		}
@@ -209,7 +248,7 @@ func TestMCPResultIgnoresFailingTelemetrySink(t *testing.T) {
 	for _, transport := range []string{telemetry.TransportStdio, telemetry.TransportHTTP} {
 		t.Run(transport, func(t *testing.T) {
 			recorder := telemetry.New(failingTelemetryWriter{}, "test")
-			client, cleanup := connectTelemetryClient(t, transport, recorder)
+			client, cleanup := connectTelemetryClient(t, transport, recorder, &telemetryDevice{})
 			defer cleanup()
 			result, err := client.CallTool(context.Background(), &mcp.CallToolParams{Name: ListDevicesToolName})
 			if err != nil || result == nil || result.IsError {
@@ -227,7 +266,7 @@ func TestMCPResultDoesNotWaitForSlowTelemetrySink(t *testing.T) {
 		t.Run(transport, func(t *testing.T) {
 			writer := &slowTelemetryWriter{started: make(chan struct{}), release: make(chan struct{})}
 			recorder := telemetry.New(writer, "test")
-			client, cleanup := connectTelemetryClient(t, transport, recorder)
+			client, cleanup := connectTelemetryClient(t, transport, recorder, &telemetryDevice{})
 			defer cleanup()
 			callDone := make(chan error, 1)
 			go func() {
@@ -261,9 +300,9 @@ func TestMCPResultDoesNotWaitForSlowTelemetrySink(t *testing.T) {
 	}
 }
 
-func connectTelemetryClient(t *testing.T, transport string, recorder *telemetry.Recorder) (*mcp.ClientSession, func()) {
+func connectTelemetryClient(t *testing.T, transport string, recorder *telemetry.Recorder, device Device) (*mcp.ClientSession, func()) {
 	t.Helper()
-	server := NewWithTelemetry(&telemetryDevice{}, "test", recorder, transport)
+	server := NewWithTelemetry(device, "test", recorder, transport)
 	if transport == telemetry.TransportHTTP {
 		httpServer := httptest.NewServer(NewHTTPHandler(server, ""))
 		client, err := mcp.NewClient(&mcp.Implementation{Name: "telemetry-sink-test", Version: "test"}, nil).Connect(
@@ -278,7 +317,10 @@ func connectTelemetryClient(t *testing.T, transport string, recorder *telemetry.
 			httpServer.Close()
 		}
 	}
-	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverReader, clientWriter := io.Pipe()
+	clientReader, serverWriter := io.Pipe()
+	serverTransport := &mcp.IOTransport{Reader: serverReader, Writer: serverWriter}
+	clientTransport := &mcp.IOTransport{Reader: clientReader, Writer: clientWriter}
 	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -291,6 +333,10 @@ func connectTelemetryClient(t *testing.T, transport string, recorder *telemetry.
 	return client, func() {
 		_ = client.Close()
 		_ = serverSession.Close()
+		_ = clientWriter.Close()
+		_ = clientReader.Close()
+		_ = serverWriter.Close()
+		_ = serverReader.Close()
 	}
 }
 
@@ -349,15 +395,8 @@ func TestToolTelemetryProhibitsSensitiveInputsOutputsAndErrors(t *testing.T) {
 	const sentinel = "PRIVATE-SENTINEL-typed-image-url-path-token-config-firmware-rpc-child"
 	var stderr bytes.Buffer
 	recorder := telemetry.New(&stderr, "test")
-	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	serverSession, err := NewWithTelemetry(&privacyTelemetryDevice{}, "test", recorder, telemetry.TransportStdio).Connect(context.Background(), serverTransport, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "privacy-test", Version: "test"}, nil).Connect(context.Background(), clientTransport, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	clientSession, cleanup := connectTelemetryClient(t, telemetry.TransportStdio, recorder, &privacyTelemetryDevice{})
+	defer cleanup()
 	for _, call := range []mcp.CallToolParams{
 		{Name: GetStatusToolName, Arguments: map[string]any{"device": sentinel}},
 		{Name: CaptureScreenToolName, Arguments: map[string]any{"device": sentinel}},
@@ -366,8 +405,6 @@ func TestToolTelemetryProhibitsSensitiveInputsOutputsAndErrors(t *testing.T) {
 	} {
 		_, _ = clientSession.CallTool(context.Background(), &call)
 	}
-	_ = clientSession.Close()
-	_ = serverSession.Close()
 	if err := recorder.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}

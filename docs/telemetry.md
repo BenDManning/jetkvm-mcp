@@ -44,7 +44,10 @@ aggregate number of events rejected by full queues, and `writer_failed`, which
 states whether any completed sink write returned an error. Its outcome is
 `failed` when either value indicates loss and `succeeded` otherwise. A blocked
 or permanently failed sink can also prevent the summary itself from being
-retained; the one-second application close deadline still bounds shutdown.
+retained; the one-second application close deadline still bounds shutdown. If
+writing the summary itself reports a failure, the recorder makes one corrective
+attempt with the same correlation ID and `writer_failed=true`; this attempt is
+also bounded and may be absent when the sink remains unavailable.
 
 All stages of one operation share its correlation ID. Stage timing measures the
 existing boundary without moving or changing that boundary:
@@ -79,8 +82,9 @@ recorded for the summary but never returned through an MCP or device operation.
 
 ## Verification scope
 
-The repository tests cover stdio and loopback HTTP telemetry, success and stable
-failure classes, cancellation, timeout, busy outcomes, internal stage
+The repository tests cover pipe-backed stdio and loopback HTTP telemetry,
+success and stable failure classes, cancellation, timeout, busy outcomes,
+internal stage
 correlation (including cancellation-detached cleanup), final output-schema and
 capture-serialization outcomes, sensitive sentinel exclusion, concurrent line
 integrity, stage-pressure terminal reservation, slow and failing writers, and
