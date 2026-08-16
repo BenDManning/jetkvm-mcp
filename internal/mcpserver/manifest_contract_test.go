@@ -77,14 +77,17 @@ func (*contractDevice) Mouse(_ context.Context, _ string, request MouseRequest) 
 
 func (*contractDevice) VirtualMedia(_ context.Context, _ string, request VirtualMediaRequest) (VirtualMediaResult, error) {
 	sourceType := VirtualMediaSourceType("")
+	status := "completed"
 	if request.Operation == VirtualMediaMountURL {
 		sourceType = VirtualMediaSourceHTTP
 	} else if request.Operation == VirtualMediaMountFile || request.Operation == VirtualMediaUpload {
 		sourceType = VirtualMediaSourceStorage
+	} else if request.Operation == VirtualMediaStatus {
+		status = "observed"
 	}
 	return VirtualMediaResult{
 		Device: "fixture-device", Operation: request.Operation, Mounted: false,
-		SourceType: sourceType, Mode: request.Mode, Status: "completed",
+		SourceType: sourceType, Mode: request.Mode, Status: status,
 	}, nil
 }
 

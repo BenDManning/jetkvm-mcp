@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/BenDManning/jetkvm-mcp/internal/httporigin"
 	"github.com/BenDManning/jetkvm-mcp/internal/jetkvm"
@@ -18,6 +19,8 @@ import (
 )
 
 const maxConfigBytes = 1 << 20
+
+const maxIdentifierCodePoints = 128
 
 var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -118,7 +121,16 @@ func Load(path string, lookup LookupEnvironment) (Runtime, error) {
 	}
 	sort.Strings(names)
 	runtime := Runtime{Devices: make([]jetkvm.DeviceConfig, 0, len(names)), Limits: limits}
+	seenDeviceNames := make(map[string]struct{}, len(names))
 	for _, name := range names {
+		normalizedName, ok := boundedIdentifier(name)
+		if !ok {
+			return Runtime{}, fmt.Errorf("device alias must contain 1 through %d Unicode code points", maxIdentifierCodePoints)
+		}
+		if _, duplicate := seenDeviceNames[normalizedName]; duplicate {
+			return Runtime{}, errors.New("device aliases must be unique after trimming")
+		}
+		seenDeviceNames[normalizedName] = struct{}{}
 		configured := source.Devices[name]
 		rawURL := strings.TrimSpace(configured.URL)
 		parsed, err := url.Parse(rawURL)
@@ -157,12 +169,19 @@ func Load(path string, lookup LookupEnvironment) (Runtime, error) {
 		}
 		wakeTargets := make(map[string]jetkvm.WakeOnLANTarget, len(configured.WakeOnLAN))
 		for targetName, target := range configured.WakeOnLAN {
-			wakeTargets[targetName] = jetkvm.WakeOnLANTarget{
+			normalizedTarget, ok := boundedIdentifier(targetName)
+			if !ok {
+				return Runtime{}, fmt.Errorf("Wake-on-LAN target alias must contain 1 through %d Unicode code points", maxIdentifierCodePoints)
+			}
+			if _, duplicate := wakeTargets[normalizedTarget]; duplicate {
+				return Runtime{}, errors.New("Wake-on-LAN target aliases must be unique after trimming")
+			}
+			wakeTargets[normalizedTarget] = jetkvm.WakeOnLANTarget{
 				MACAddress: strings.TrimSpace(target.MACAddress), BroadcastIP: strings.TrimSpace(target.BroadcastIP),
 			}
 		}
 		runtime.Devices = append(runtime.Devices, jetkvm.DeviceConfig{
-			Name: strings.TrimSpace(name), BaseURL: *parsed, Password: password,
+			Name: normalizedName, BaseURL: *parsed, Password: password,
 			InsecureSkipVerify: configured.InsecureSkipVerify, MediaDirectory: mediaDirectory,
 			MediaURLAllowedOrigins: mediaOrigins, WakeOnLAN: wakeTargets,
 		})
@@ -185,6 +204,12 @@ func Load(path string, lookup LookupEnvironment) (Runtime, error) {
 		runtime.HTTPAllowedOrigins = append(runtime.HTTPAllowedOrigins, origin)
 	}
 	return runtime, nil
+}
+
+func boundedIdentifier(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	count := utf8.RuneCountInString(trimmed)
+	return trimmed, utf8.ValidString(trimmed) && count >= 1 && count <= maxIdentifierCodePoints
 }
 
 func normalizeHTTPOrigin(value string) (string, error) {
