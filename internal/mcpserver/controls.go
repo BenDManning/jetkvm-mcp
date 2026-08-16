@@ -69,7 +69,7 @@ type KeyboardRequest struct {
 type KeyboardResult struct {
 	Device    string            `json:"device" jsonschema:"configured device identifier"`
 	Operation KeyboardOperation `json:"operation" jsonschema:"submitted HID keyboard operation, not typed text"`
-	Status    string            `json:"status" jsonschema:"completed means the HID RPC returned, not independent host-state proof"`
+	Status    ResultStatus      `json:"status" jsonschema:"completed means the HID RPC returned, not independent host-state proof"`
 }
 
 type MouseOperation string
@@ -95,7 +95,7 @@ type MouseRequest struct {
 type MouseResult struct {
 	Device    string         `json:"device" jsonschema:"configured device identifier"`
 	Operation MouseOperation `json:"operation" jsonschema:"submitted HID mouse operation"`
-	Status    string         `json:"status" jsonschema:"completed means the HID RPC returned, not independent host-state proof"`
+	Status    ResultStatus   `json:"status" jsonschema:"completed means the HID RPC returned, not independent host-state proof"`
 }
 
 type VirtualMediaOperation string
@@ -136,7 +136,7 @@ type VirtualMediaResult struct {
 	Mounted    bool                   `json:"mounted" jsonschema:"reported mount state"`
 	SourceType VirtualMediaSourceType `json:"sourceType,omitempty" jsonschema:"redacted media source class; never a URL, path, or filename"`
 	Mode       string                 `json:"mode,omitempty" jsonschema:"reported read_only or read_write mode when available"`
-	Status     string                 `json:"status" jsonschema:"observed for status, completed for an acknowledged mutation; neither independently proves final device state"`
+	Status     ResultStatus           `json:"status" jsonschema:"observed for status, completed for an acknowledged mutation; neither independently proves final device state"`
 }
 
 type captureInput struct {
@@ -268,7 +268,7 @@ func addControlTools(server *mcp.Server, device Device) {
 		return nil, result, err
 	})
 
-	addSanitizedInputMutationTool(server, &mcp.Tool{
+	addMutationTool(server, &mcp.Tool{
 		Name:         MountVirtualMediaURLToolName,
 		Title:        "Mount virtual media from URL",
 		Description:  "Ask the configured JetKVM appliance to fetch a private HTTP(S) URL whose scheme, host, and effective port match a configured exact origin, then replace its current virtual-media mount. URL mounting is unavailable without an allowed origin. If a mutation reports outcome unknown, do not blindly retry; inspect status first.",
@@ -284,7 +284,7 @@ func addControlTools(server *mcp.Server, device Device) {
 		return nil, result, err
 	})
 
-	addSanitizedInputMutationTool(server, &mcp.Tool{
+	addMutationTool(server, &mcp.Tool{
 		Name:         MountVirtualMediaFileToolName,
 		Title:        "Mount virtual media from file",
 		Description:  "Upload one private confined local media file and replace the configured JetKVM's current mount. Requires a configured media directory and a non-empty relative path beneath it. If a mutation reports outcome unknown, do not blindly retry; inspect status first.",
@@ -314,7 +314,7 @@ func addControlTools(server *mcp.Server, device Device) {
 		return nil, result, err
 	})
 
-	addSanitizedInputMutationTool(server, &mcp.Tool{
+	addMutationTool(server, &mcp.Tool{
 		Name:         UploadVirtualMediaFileToolName,
 		Title:        "Upload virtual-media file",
 		Description:  "Upload one private confined local media file to appliance storage on a configured JetKVM without mounting it. Requires a configured media directory and a non-empty relative path beneath it; appliance storage retention is outside this process. If a mutation reports outcome unknown, do not blindly retry; inspect status first.",
@@ -434,6 +434,11 @@ func statusOutputSchema() *jsonschema.Schema {
 	media.Types = nil
 	setStringEnum(media.Properties["sourceType"], []string{string(VirtualMediaSourceHTTP), string(VirtualMediaSourceStorage)})
 	setStringEnum(media.Properties["mode"], []string{"read_only", "read_write"})
+	setStringEnum(schema.Properties["warnings"].Items, []string{
+		string(StatusWarningVersionUnavailable), string(StatusWarningActiveExtensionUnavailable),
+		string(StatusWarningVirtualMediaUnavailable), string(StatusWarningVideoUnavailable),
+		string(StatusWarningUSBUnavailable), string(StatusWarningATXUnavailable), string(StatusWarningDCUnavailable),
+	})
 	return schema
 }
 
@@ -443,14 +448,38 @@ func virtualMediaResultSchema(operation VirtualMediaOperation) *jsonschema.Schem
 		panic(fmt.Sprintf("virtual media output schema: %v", err))
 	}
 	setStringEnum(schema.Properties["operation"], []string{string(operation)})
-	setStringEnum(schema.Properties["sourceType"], []string{string(VirtualMediaSourceHTTP), string(VirtualMediaSourceStorage)})
-	setStringEnum(schema.Properties["mode"], []string{"read_only", "read_write"})
-	status := "completed"
-	if operation == VirtualMediaStatus {
-		status = "observed"
+	status := ResultStatusCompleted
+	switch operation {
+	case VirtualMediaStatus:
+		status = ResultStatusObserved
+		setStringEnum(schema.Properties["sourceType"], []string{string(VirtualMediaSourceHTTP), string(VirtualMediaSourceStorage)})
+		setStringEnum(schema.Properties["mode"], []string{"read_only", "read_write"})
+	case VirtualMediaMountURL:
+		setStringEnum(schema.Properties["sourceType"], []string{string(VirtualMediaSourceHTTP)})
+		setStringEnum(schema.Properties["mode"], []string{"read_only", "read_write"})
+		setBooleanConst(schema.Properties["mounted"], true)
+	case VirtualMediaMountFile:
+		setStringEnum(schema.Properties["sourceType"], []string{string(VirtualMediaSourceStorage)})
+		setStringEnum(schema.Properties["mode"], []string{"read_only", "read_write"})
+		setBooleanConst(schema.Properties["mounted"], true)
+	case VirtualMediaUpload:
+		setStringEnum(schema.Properties["sourceType"], []string{string(VirtualMediaSourceStorage)})
+		setStringEnum(schema.Properties["mode"], []string{"read_only"})
+		setBooleanConst(schema.Properties["mounted"], false)
+	case VirtualMediaUnmount:
+		setBooleanConst(schema.Properties["mounted"], false)
+		schema.Not = &jsonschema.Schema{AnyOf: []*jsonschema.Schema{
+			{Required: []string{"sourceType"}},
+			{Required: []string{"mode"}},
+		}}
 	}
-	setStringEnum(schema.Properties["status"], []string{status})
+	setStringEnum(schema.Properties["status"], []string{string(status)})
 	return schema
+}
+
+func setBooleanConst(property *jsonschema.Schema, value bool) {
+	constant := any(value)
+	property.Const = &constant
 }
 
 func keyboardResultSchema() *jsonschema.Schema {
@@ -459,7 +488,7 @@ func keyboardResultSchema() *jsonschema.Schema {
 		panic(fmt.Sprintf("keyboard output schema: %v", err))
 	}
 	setStringEnum(schema.Properties["operation"], []string{string(KeyboardTypeText), string(KeyboardPressKey)})
-	setStringEnum(schema.Properties["status"], []string{"completed"})
+	setStringEnum(schema.Properties["status"], []string{string(ResultStatusCompleted)})
 	return schema
 }
 
@@ -471,7 +500,7 @@ func mouseResultSchema() *jsonschema.Schema {
 	setStringEnum(schema.Properties["operation"], []string{
 		string(MouseMoveAbsolute), string(MouseMoveRelative), string(MouseClick), string(MouseScroll),
 	})
-	setStringEnum(schema.Properties["status"], []string{"completed"})
+	setStringEnum(schema.Properties["status"], []string{string(ResultStatusCompleted)})
 	return schema
 }
 

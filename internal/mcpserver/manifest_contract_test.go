@@ -52,7 +52,7 @@ func (*contractDevice) Status(context.Context, string) (Status, error) {
 		Extension: "atx-power", ATXPowerOn: &atxPowerOn, VideoReady: &videoReady,
 		VideoWidth: 640, VideoHeight: 480, VideoFPS: 30,
 		VirtualMedia: &VirtualMediaState{Mounted: false},
-		USBState:     "attached", USBWakeAttached: &usbWakeAttached, Warnings: []string{"fixture warning"},
+		USBState:     "attached", USBWakeAttached: &usbWakeAttached, Warnings: []StatusWarning{StatusWarningVideoUnavailable},
 	}, nil
 }
 
@@ -77,16 +77,19 @@ func (*contractDevice) Mouse(_ context.Context, _ string, request MouseRequest) 
 
 func (*contractDevice) VirtualMedia(_ context.Context, _ string, request VirtualMediaRequest) (VirtualMediaResult, error) {
 	sourceType := VirtualMediaSourceType("")
-	status := "completed"
+	status := ResultStatusCompleted
+	mounted := false
 	if request.Operation == VirtualMediaMountURL {
 		sourceType = VirtualMediaSourceHTTP
+		mounted = true
 	} else if request.Operation == VirtualMediaMountFile || request.Operation == VirtualMediaUpload {
 		sourceType = VirtualMediaSourceStorage
+		mounted = request.Operation == VirtualMediaMountFile
 	} else if request.Operation == VirtualMediaStatus {
-		status = "observed"
+		status = ResultStatusObserved
 	}
 	return VirtualMediaResult{
-		Device: "fixture-device", Operation: request.Operation, Mounted: false,
+		Device: "fixture-device", Operation: request.Operation, Mounted: mounted,
 		SourceType: sourceType, Mode: request.Mode, Status: status,
 	}, nil
 }

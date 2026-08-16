@@ -301,6 +301,15 @@
           "warnings": {
             "description": "private appliance warnings when reported",
             "items": {
+              "enum": [
+                "version unavailable",
+                "active extension unavailable",
+                "virtual media unavailable",
+                "video unavailable",
+                "USB unavailable",
+                "ATX state unavailable",
+                "DC state unavailable"
+              ],
               "type": "string"
             },
             "type": [
@@ -676,6 +685,7 @@
             "type": "string"
           },
           "mounted": {
+            "const": true,
             "description": "reported mount state",
             "type": "boolean"
           },
@@ -689,7 +699,6 @@
           "sourceType": {
             "description": "redacted media source class; never a URL, path, or filename",
             "enum": [
-              "http",
               "storage"
             ],
             "type": "string"
@@ -769,6 +778,7 @@
             "type": "string"
           },
           "mounted": {
+            "const": true,
             "description": "reported mount state",
             "type": "boolean"
           },
@@ -782,8 +792,7 @@
           "sourceType": {
             "description": "redacted media source class; never a URL, path, or filename",
             "enum": [
-              "http",
-              "storage"
+              "http"
             ],
             "type": "string"
           },
@@ -1391,6 +1400,20 @@
       },
       "outputSchema": {
         "additionalProperties": false,
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "sourceType"
+              ]
+            },
+            {
+              "required": [
+                "mode"
+              ]
+            }
+          ]
+        },
         "properties": {
           "device": {
             "description": "configured device identifier",
@@ -1398,13 +1421,10 @@
           },
           "mode": {
             "description": "reported read_only or read_write mode when available",
-            "enum": [
-              "read_only",
-              "read_write"
-            ],
             "type": "string"
           },
           "mounted": {
+            "const": false,
             "description": "reported mount state",
             "type": "boolean"
           },
@@ -1417,10 +1437,6 @@
           },
           "sourceType": {
             "description": "redacted media source class; never a URL, path, or filename",
-            "enum": [
-              "http",
-              "storage"
-            ],
             "type": "string"
           },
           "status": {
@@ -1484,12 +1500,12 @@
           "mode": {
             "description": "reported read_only or read_write mode when available",
             "enum": [
-              "read_only",
-              "read_write"
+              "read_only"
             ],
             "type": "string"
           },
           "mounted": {
+            "const": false,
             "description": "reported mount state",
             "type": "boolean"
           },
@@ -1503,7 +1519,6 @@
           "sourceType": {
             "description": "redacted media source class; never a URL, path, or filename",
             "enum": [
-              "http",
               "storage"
             ],
             "type": "string"
@@ -1754,7 +1769,7 @@
               "mounted": false
             },
             "warnings": [
-              "fixture warning"
+              "video unavailable"
             ]
           },
           "meta": null,
@@ -1788,7 +1803,7 @@
           "mounted": false
         },
         "warnings": [
-          "fixture warning"
+          "video unavailable"
         ]
       }
     },
@@ -1903,7 +1918,7 @@
           "annotations": null,
           "json": {
             "device": "fixture-device",
-            "mounted": false,
+            "mounted": true,
             "operation": "mount_file",
             "sourceType": "storage",
             "status": "completed"
@@ -1924,7 +1939,7 @@
       "requestState": "",
       "structuredContent": {
         "device": "fixture-device",
-        "mounted": false,
+        "mounted": true,
         "operation": "mount_file",
         "sourceType": "storage",
         "status": "completed"
@@ -1936,7 +1951,7 @@
           "annotations": null,
           "json": {
             "device": "fixture-device",
-            "mounted": false,
+            "mounted": true,
             "operation": "mount_url",
             "sourceType": "http",
             "status": "completed"
@@ -1957,7 +1972,7 @@
       "requestState": "",
       "structuredContent": {
         "device": "fixture-device",
-        "mounted": false,
+        "mounted": true,
         "operation": "mount_url",
         "sourceType": "http",
         "status": "completed"

@@ -41,7 +41,10 @@ func TestPublicToolInputsEnforceUnicodeBoundsWithoutReflectingValues(t *testing.
 	for _, call := range []mcp.CallToolParams{
 		{Name: GetStatusToolName, Arguments: map[string]any{"device": boundaryAlias}},
 		{Name: WakeHostLANToolName, Arguments: map[string]any{"device": boundaryAlias, "target": boundaryTarget}},
-		{Name: KeyboardToolName, Arguments: map[string]any{"device": boundaryAlias, "operation": "press_key", "key": strings.Repeat("k", 32)}},
+		{Name: KeyboardToolName, Arguments: map[string]any{
+			"device": boundaryAlias, "operation": "press_key", "key": strings.Repeat("界", 31) + "k",
+			"modifiers": []any{"ctrl", "alt", "shift", "meta"},
+		}},
 	} {
 		result, err := session.CallTool(context.Background(), &call)
 		if err != nil || result == nil || result.IsError {
@@ -60,8 +63,9 @@ func TestPublicToolInputsEnforceUnicodeBoundsWithoutReflectingValues(t *testing.
 		{Name: WakeHostLANToolName, Arguments: map[string]any{"device": "lab", "target": ""}},
 		{Name: WakeHostLANToolName, Arguments: map[string]any{"device": "lab", "target": strings.Repeat(privateSentinel, 13)}},
 		{Name: KeyboardToolName, Arguments: map[string]any{"device": "lab", "operation": "press_key", "key": strings.Repeat(privateSentinel, 3)}},
+		{Name: KeyboardToolName, Arguments: map[string]any{"device": "lab", "operation": "press_key", "key": strings.Repeat("界", 32) + "k"}},
 		{Name: KeyboardToolName, Arguments: map[string]any{"device": "lab", "operation": "press_key", "key": "enter", "modifiers": []any{"ctrl", "ctrl"}}},
-		{Name: KeyboardToolName, Arguments: map[string]any{"device": "lab", "operation": "press_key", "key": "enter", "modifiers": []any{"ctrl", "alt", "shift", "meta", "ctrl"}}},
+		{Name: KeyboardToolName, Arguments: map[string]any{"device": "lab", "operation": "press_key", "key": "enter", "modifiers": []any{"ctrl", "alt", "shift", "meta", "caps_lock"}}},
 	}
 	for _, call := range invalid {
 		result, err := session.CallTool(context.Background(), &call)

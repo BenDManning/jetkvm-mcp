@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
+	"github.com/BenDManning/jetkvm-mcp/internal/identifier"
 	"github.com/BenDManning/jetkvm-mcp/internal/telemetry"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -40,6 +39,27 @@ const (
 	PowerActionWakeHostLAN          PowerAction = "wake_host_lan"
 )
 
+// ResultStatus is the fixed acknowledgement vocabulary used by successful
+// operation results.
+type ResultStatus string
+
+const (
+	ResultStatusCompleted ResultStatus = "completed"
+	ResultStatusObserved  ResultStatus = "observed"
+)
+
+type StatusWarning string
+
+const (
+	StatusWarningVersionUnavailable         StatusWarning = "version unavailable"
+	StatusWarningActiveExtensionUnavailable StatusWarning = "active extension unavailable"
+	StatusWarningVirtualMediaUnavailable    StatusWarning = "virtual media unavailable"
+	StatusWarningVideoUnavailable           StatusWarning = "video unavailable"
+	StatusWarningUSBUnavailable             StatusWarning = "USB unavailable"
+	StatusWarningATXUnavailable             StatusWarning = "ATX state unavailable"
+	StatusWarningDCUnavailable              StatusWarning = "DC state unavailable"
+)
+
 // Status is the device state returned by the status tool. Optional fields remain
 // absent when a particular firmware does not report them.
 type Status struct {
@@ -58,16 +78,16 @@ type Status struct {
 	VirtualMedia    *VirtualMediaState `json:"virtualMedia,omitempty" jsonschema:"redacted observed virtual-media state when reported"`
 	USBState        string             `json:"usbState,omitempty" jsonschema:"private observed USB state when reported"`
 	USBWakeAttached *bool              `json:"usbWakeAttached,omitempty" jsonschema:"private observed USB wake attachment state when reported"`
-	Warnings        []string           `json:"warnings,omitempty" jsonschema:"private appliance warnings when reported"`
+	Warnings        []StatusWarning    `json:"warnings,omitempty" jsonschema:"private appliance warnings when reported"`
 }
 
 // PowerResult describes the submitted host-power operation without exposing
 // firmware-private RPC details.
 type PowerResult struct {
-	Device string      `json:"device" jsonschema:"configured device identifier"`
-	Action PowerAction `json:"action" jsonschema:"submitted power or wake action"`
-	Target string      `json:"target,omitempty" jsonschema:"configured Wake-on-LAN target identifier when applicable"`
-	Status string      `json:"status" jsonschema:"completed means the appliance RPC returned, not independent physical-state proof"`
+	Device string       `json:"device" jsonschema:"configured device identifier"`
+	Action PowerAction  `json:"action" jsonschema:"submitted power or wake action"`
+	Target string       `json:"target,omitempty" jsonschema:"configured Wake-on-LAN target identifier when applicable"`
+	Status ResultStatus `json:"status" jsonschema:"completed means the appliance RPC returned, not independent physical-state proof"`
 }
 
 type DeviceCapabilities struct {
@@ -107,8 +127,6 @@ type wakeLANInput struct {
 	Device string `json:"device" jsonschema:"configured JetKVM device name"`
 	Target string `json:"target" jsonschema:"configured Wake-on-LAN target name; it does not accept arbitrary network destinations"`
 }
-
-const maxIdentifierCodePoints = 128
 
 // New builds a JetKVM MCP server using only the official Go SDK.
 func New(device Device, version string) *Server {
@@ -324,14 +342,6 @@ func addMutationTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mc
 	addInputTool(server, tool, func(In) bool { return true }, handler)
 }
 
-// addSanitizedInputMutationTool retains the public JSON Schema while handling
-// its validation locally. All tool input validation is value-free; this name
-// calls out tools whose URL or path fields make that property especially easy
-// to regress.
-func addSanitizedInputMutationTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[In, Out]) {
-	addInputTool(server, tool, func(In) bool { return true }, handler)
-}
-
 func addInputTool[In, Out any](server *mcp.Server, tool *mcp.Tool, mutation func(In) bool, handler mcp.ToolHandlerFor[In, Out]) {
 	inputSchema, ok := tool.InputSchema.(*jsonschema.Schema)
 	if !ok || inputSchema == nil {
@@ -434,7 +444,8 @@ func decodeSanitizedToolInput[In any](arguments json.RawMessage, schema *jsonsch
 	}
 	for _, name := range []string{"device", "target"} {
 		if text, ok := value[name].(string); ok {
-			value[name] = strings.TrimSpace(text)
+			normalized, _ := identifier.Normalize(text)
+			value[name] = normalized
 		}
 	}
 	var instance any = value
@@ -492,7 +503,7 @@ func powerResultSchema(action PowerAction) *jsonschema.Schema {
 		panic(fmt.Sprintf("power output schema: %v", err))
 	}
 	setStringEnum(schema.Properties["action"], []string{string(action)})
-	setStringEnum(schema.Properties["status"], []string{"completed"})
+	setStringEnum(schema.Properties["status"], []string{string(ResultStatusCompleted)})
 	return schema
 }
 
@@ -501,7 +512,7 @@ func boundIdentifierProperty(schema *jsonschema.Schema, name string) {
 	if property == nil {
 		return
 	}
-	minimum, maximum := 1, maxIdentifierCodePoints
+	minimum, maximum := 1, identifier.MaxCodePoints
 	property.MinLength = &minimum
 	property.MaxLength = &maximum
 }
@@ -511,9 +522,8 @@ func validDevice(device string) error {
 }
 
 func validIdentifier(value, name string) error {
-	trimmed := strings.TrimSpace(value)
-	if !utf8.ValidString(trimmed) || utf8.RuneCountInString(trimmed) < 1 || utf8.RuneCountInString(trimmed) > maxIdentifierCodePoints {
-		return fmt.Errorf("%s must contain 1 through %d Unicode code points", name, maxIdentifierCodePoints)
+	if _, ok := identifier.Normalize(value); !ok {
+		return fmt.Errorf("%s must contain 1 through %d Unicode code points", name, identifier.MaxCodePoints)
 	}
 	return nil
 }

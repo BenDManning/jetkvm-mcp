@@ -11,16 +11,14 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/BenDManning/jetkvm-mcp/internal/httporigin"
+	"github.com/BenDManning/jetkvm-mcp/internal/identifier"
 	"github.com/BenDManning/jetkvm-mcp/internal/jetkvm"
 	"gopkg.in/yaml.v3"
 )
 
 const maxConfigBytes = 1 << 20
-
-const maxIdentifierCodePoints = 128
 
 var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -123,9 +121,9 @@ func Load(path string, lookup LookupEnvironment) (Runtime, error) {
 	runtime := Runtime{Devices: make([]jetkvm.DeviceConfig, 0, len(names)), Limits: limits}
 	seenDeviceNames := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		normalizedName, ok := boundedIdentifier(name)
+		normalizedName, ok := identifier.Normalize(name)
 		if !ok {
-			return Runtime{}, fmt.Errorf("device alias must contain 1 through %d Unicode code points", maxIdentifierCodePoints)
+			return Runtime{}, fmt.Errorf("device alias must contain 1 through %d Unicode code points", identifier.MaxCodePoints)
 		}
 		if _, duplicate := seenDeviceNames[normalizedName]; duplicate {
 			return Runtime{}, errors.New("device aliases must be unique after trimming")
@@ -169,9 +167,9 @@ func Load(path string, lookup LookupEnvironment) (Runtime, error) {
 		}
 		wakeTargets := make(map[string]jetkvm.WakeOnLANTarget, len(configured.WakeOnLAN))
 		for targetName, target := range configured.WakeOnLAN {
-			normalizedTarget, ok := boundedIdentifier(targetName)
+			normalizedTarget, ok := identifier.Normalize(targetName)
 			if !ok {
-				return Runtime{}, fmt.Errorf("Wake-on-LAN target alias must contain 1 through %d Unicode code points", maxIdentifierCodePoints)
+				return Runtime{}, fmt.Errorf("Wake-on-LAN target alias must contain 1 through %d Unicode code points", identifier.MaxCodePoints)
 			}
 			if _, duplicate := wakeTargets[normalizedTarget]; duplicate {
 				return Runtime{}, errors.New("Wake-on-LAN target aliases must be unique after trimming")
@@ -204,12 +202,6 @@ func Load(path string, lookup LookupEnvironment) (Runtime, error) {
 		runtime.HTTPAllowedOrigins = append(runtime.HTTPAllowedOrigins, origin)
 	}
 	return runtime, nil
-}
-
-func boundedIdentifier(value string) (string, bool) {
-	trimmed := strings.TrimSpace(value)
-	count := utf8.RuneCountInString(trimmed)
-	return trimmed, utf8.ValidString(trimmed) && count >= 1 && count <= maxIdentifierCodePoints
 }
 
 func normalizeHTTPOrigin(value string) (string, error) {

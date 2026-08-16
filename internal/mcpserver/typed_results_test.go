@@ -32,6 +32,13 @@ func (*invalidOutputDevice) Keyboard(context.Context, string, KeyboardRequest) (
 	return KeyboardResult{Device: "lab", Operation: KeyboardOperation("PRIVATE-OUTPUT-SENTINEL"), Status: "completed"}, nil
 }
 
+func (*invalidOutputDevice) VirtualMedia(_ context.Context, _ string, request VirtualMediaRequest) (VirtualMediaResult, error) {
+	return VirtualMediaResult{
+		Device: "lab", Operation: request.Operation, SourceType: VirtualMediaSourceHTTP,
+		Mode: "read_only", Status: ResultStatusCompleted,
+	}, nil
+}
+
 func (*typedResultDevice) Status(context.Context, string) (Status, error) {
 	return Status{
 		Device: "lab", Connected: true,
@@ -184,11 +191,11 @@ func TestPublicOutputSchemasConstrainFixedVocabularies(t *testing.T) {
 		WakeHostLANToolName:            {"action": {string(PowerActionWakeHostLAN)}, "status": {"completed"}},
 		KeyboardToolName:               {"operation": {string(KeyboardTypeText), string(KeyboardPressKey)}, "status": {"completed"}},
 		MouseToolName:                  {"operation": {string(MouseMoveAbsolute), string(MouseMoveRelative), string(MouseClick), string(MouseScroll)}, "status": {"completed"}},
-		GetVirtualMediaStatusToolName:  {"operation": {string(VirtualMediaStatus)}, "status": {"observed"}},
-		MountVirtualMediaURLToolName:   {"operation": {string(VirtualMediaMountURL)}, "status": {"completed"}},
-		MountVirtualMediaFileToolName:  {"operation": {string(VirtualMediaMountFile)}, "status": {"completed"}},
+		GetVirtualMediaStatusToolName:  {"operation": {string(VirtualMediaStatus)}, "sourceType": {"http", "storage"}, "status": {"observed"}},
+		MountVirtualMediaURLToolName:   {"operation": {string(VirtualMediaMountURL)}, "sourceType": {"http"}, "status": {"completed"}},
+		MountVirtualMediaFileToolName:  {"operation": {string(VirtualMediaMountFile)}, "sourceType": {"storage"}, "status": {"completed"}},
 		UnmountVirtualMediaToolName:    {"operation": {string(VirtualMediaUnmount)}, "status": {"completed"}},
-		UploadVirtualMediaFileToolName: {"operation": {string(VirtualMediaUpload)}, "status": {"completed"}},
+		UploadVirtualMediaFileToolName: {"operation": {string(VirtualMediaUpload)}, "sourceType": {"storage"}, "mode": {"read_only"}, "status": {"completed"}},
 		CaptureScreenToolName:          {"mimeType": {"image/png"}},
 	}
 	for name, properties := range expected {
@@ -219,6 +226,29 @@ func TestPublicOutputSchemasConstrainFixedVocabularies(t *testing.T) {
 				}
 			}
 		}
+	}
+
+	statusTool := findTool(t, listed.Tools, GetStatusToolName)
+	data, err := json.Marshal(statusTool.OutputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statusSchema struct {
+		Properties map[string]struct {
+			Items struct {
+				Enum []string `json:"enum"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &statusSchema); err != nil {
+		t.Fatal(err)
+	}
+	warnings := []string{
+		"version unavailable", "active extension unavailable", "virtual media unavailable", "video unavailable",
+		"USB unavailable", "ATX state unavailable", "DC state unavailable",
+	}
+	if got := statusSchema.Properties["warnings"].Items.Enum; !sameStrings(got, warnings) {
+		t.Fatalf("status warning enum = %v, want %v", got, warnings)
 	}
 }
 
@@ -261,6 +291,7 @@ func TestInvalidProviderOutputsReturnSanitizedToolErrors(t *testing.T) {
 	for _, call := range []mcp.CallToolParams{
 		{Name: GetStatusToolName, Arguments: map[string]any{"device": "lab"}},
 		{Name: KeyboardToolName, Arguments: map[string]any{"device": "lab", "operation": "press_key", "key": "enter"}},
+		{Name: UnmountVirtualMediaToolName, Arguments: map[string]any{"device": "lab"}},
 	} {
 		result, err := session.CallTool(context.Background(), &call)
 		if err != nil || result == nil || !result.IsError {
@@ -271,7 +302,7 @@ func TestInvalidProviderOutputsReturnSanitizedToolErrors(t *testing.T) {
 		}
 		failure := decodeToolError(t, result)
 		wantOutcome := "failed"
-		if call.Name == KeyboardToolName {
+		if call.Name == KeyboardToolName || call.Name == UnmountVirtualMediaToolName {
 			wantOutcome = "unknown"
 		}
 		if failure.Code != "operation_failed" || failure.Outcome != wantOutcome || failure.Retryable {
