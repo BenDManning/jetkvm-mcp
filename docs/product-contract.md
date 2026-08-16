@@ -329,10 +329,11 @@ still a major change. Security, safety, or factual-correctness fixes may shorten
 that period, but must still be described in release notes and use the SemVer
 classification dictated by their compatibility impact.
 
-No designated public security-reporting route currently exists. Repository
-issue and release records are the available support and change records; secrets,
-credentials, device data, and unsanitized qualification output must not be put
-in them.
+Sensitive reports use the private route in the repository
+[`SECURITY.md`](../SECURITY.md). Ordinary best-effort support uses GitHub Issues
+as defined in [`SUPPORT.md`](../SUPPORT.md). Secrets, credentials, device data,
+and unsanitized qualification output must not be put in public issue or release
+records.
 
 ## Compatibility matrix
 
@@ -345,7 +346,7 @@ or point-in-time protocol observations.
 |---|---|---|
 | Product releases | During v0.x, declared support is the latest non-prerelease release in the current minor line | The canonical release record, not this document, identifies the current non-prerelease version and line. `dev` builds are unreleased and outside release support. |
 | MCP revision and SDK | Declared: MCP revision `2026-07-28`; implemented with Go SDK `v1.7.0` | Exercised by stdio and Streamable HTTP tests. Older revisions the SDK may negotiate are unsupported unless this contract and repository tests add them. Exact SDK provenance is in [protocol sources](protocol-sources.md). |
-| Go source and build | Declared source minimum: Go 1.25. CI/container build toolchain: Go 1.26.5 | `go.mod` declares 1.25; CI and the container use 1.26.5. Makefile, local, and arbitrary GoReleaser environments are not pinned by that fact. Go 1.25 is not exercised by current CI, and no promise covers every intervening toolchain or runtime combination. |
+| Go source and build | Declared source minimum: Go 1.25.13. CI, release, and container build toolchain: Go 1.26.6 | `go.mod` and minimum CI require 1.25.13 with `GOTOOLCHAIN=local`. Primary CI, the tracked GoReleaser snapshot path, and the container builder select 1.26.6. No promise covers every intervening toolchain or runtime combination. |
 | Native OS/architecture | Declared binary targets: `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` | CI cross-builds all four. Runtime qualification for every target is not recorded. Windows and all unlisted combinations are unsupported. |
 | FFmpeg | External prerequisite: an executable named `ffmpeg` on `PATH` for normal serving and capture | Startup and decoder tests exercise executable discovery and bounded invocation. No implementation or version range is qualified; compatibility is unknown beyond successful checks in a specific environment. |
 | JetKVM model/firmware | No model or firmware version is currently qualified or supported by a positive compatibility claim | Upstream source observations, fake-device tests, and validator runs are evidence, not guarantees. Claim requirements are defined below. |
@@ -353,7 +354,7 @@ or point-in-time protocol observations.
 | Server CLI | Declared: help, `--config`, optional `--http`, `--version`, offline `config validate`, and `debug rpc` with its documented flags, streams, and JSON result | Parser and integration tests exercise these entry points. `debug rpc` permits only `ping`, `getLocalVersion`, and `getActiveExtension` by default; every other method requires per-invocation `--unsafe-acknowledge-risk`. Free-form diagnostic wording is not stable unless documented as structured output. |
 | Validator CLI | Declared source-run interface: required `--binary`, `--config`, and `--device`; sanitized JSON and exit status | Unit tests exercise argument and report shape. Physical qualification is absent until retained evidence satisfies the policy below. No validator binary is distributed. |
 | Mutation-checklist CLI | Declared source-run interface: required `--plan`; strict `jetkvm.mutation-validation.v1` plan with concrete HID subtypes; sanitized `jetkvm.mutation-validation.report.v1` JSON and exit status | Unit tests exercise strict decoding, bounded regular-file input, plan inventory and controls, report shape, output failures, and the checked synthetic plan. It has no execution path and grants no mutation authority. No checklist binary is distributed. |
-| MCP tools, results, errors, and annotations | Declared: the 18 current tools, their schemas, structured results/content, tool-result error semantics, and annotations | [`server.go`](../internal/mcpserver/server.go), [`controls.go`](../internal/mcpserver/controls.go), and their tests are the executable source of truth. Execution failures use tool results with `IsError`, not protocol errors. `jetkvm_list_devices` returns sorted configured aliases and configuration-derived availability flags; it does not open a device session or qualify firmware capabilities. `jetkvm_virtual_media` is retained as a deprecated compatibility surface; clients should migrate each operation to the corresponding one-purpose `jetkvm_*_virtual_media*` tool. |
+| MCP tools, results, errors, and annotations | Declared: the 17 one-purpose tools, their schemas, structured results/content, tool-result error semantics, and annotations | [`server.go`](../internal/mcpserver/server.go), [`controls.go`](../internal/mcpserver/controls.go), and their tests are the executable source of truth. Execution failures use tool results with `IsError`, not protocol errors. `jetkvm_list_devices` returns sorted configured aliases and configuration-derived availability flags; it does not open a device session or qualify firmware capabilities. The v1 surface removes `jetkvm_virtual_media`; the README maps each former operation to its one-purpose replacement. |
 | Binary artifacts | Intended: one `jetkvm-mcp` binary in `jetkvm-mcp_<version>_<os>_<arch>.tar.gz` for each declared native target, plus `checksums.txt` | [GoReleaser configuration](../.goreleaser.yaml) and CI establish naming and cross-build evidence, not publication or runtime qualification. |
 | Container artifacts | Intended: Linux amd64 and arm64, one `jetkvm-mcp` entry point, bundled FFmpeg, UID/GID 10001 | The [Dockerfile](../Dockerfile) and CI establish build intent. No image name, registry channel, publication, indefinite availability, or per-platform runtime qualification is promised. |
 

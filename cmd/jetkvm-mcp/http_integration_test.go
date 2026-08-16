@@ -412,7 +412,7 @@ func TestHTTPProcessHealthSignalsAndStdoutContract(t *testing.T) {
 	}
 }
 
-func startHTTPRuntime(t *testing.T, ctx context.Context, server *mcp.Server) (string, <-chan error) {
+func startHTTPRuntime(t *testing.T, ctx context.Context, server *mcpserver.Server) (string, <-chan error) {
 	t.Helper()
 	stderrReader, stderrWriter := io.Pipe()
 	done := make(chan error, 1)
