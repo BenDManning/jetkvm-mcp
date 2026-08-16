@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func TestToolTelemetryCorrelatesSuccessFailureTimeoutCancelAndBusy(t *testing.T)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			recorder := telemetry.New(&stderr)
+			recorder := telemetry.New(&stderr, "test")
 			device := &telemetryDevice{}
 			if test.tool == PressHostPowerButtonToolName {
 				device.powerErr = test.failure
@@ -129,20 +130,26 @@ func TestToolTelemetryCorrelatesSuccessFailureTimeoutCancelAndBusy(t *testing.T)
 			if err := decoder.Decode(&event); err != nil {
 				t.Fatal(err)
 			}
-			if event.Schema != "jetkvm.operation.v1" || event.CorrelationID == "" || event.Transport != telemetry.TransportStdio || event.Operation != test.operation || event.Stage != telemetry.StageTool || event.DurationMS < 0 || event.Code != test.code || event.Outcome != test.outcome {
+			if event.Schema != "jetkvm.operation.v2" || event.CorrelationID == "" || event.Transport != telemetry.TransportStdio || event.Operation != test.operation || event.Stage != telemetry.StageTool || event.DurationMS < 0 || event.Code != test.code || event.Outcome != test.outcome {
 				t.Fatalf("event = %#v", event)
 			}
-			if err := decoder.Decode(new(any)); err == nil {
-				t.Fatal("telemetry emitted more than one tool event")
+			var summary struct {
+				Operation string `json:"operation"`
+				Stage     string `json:"stage"`
+				Code      string `json:"code"`
+			}
+			if err := decoder.Decode(&summary); err != nil || summary.Operation != telemetry.OperationLifecycle || summary.Stage != telemetry.StageShutdown || summary.Code != "telemetry_summary" {
+				t.Fatalf("shutdown summary = %#v, error = %v", summary, err)
 			}
 		})
 	}
 }
 
 func TestHTTPToolTelemetryUsesHTTPTransport(t *testing.T) {
+	const sentinel = "PRIVATE-HTTP-device-url-token-path-firmware-rpc-child-output"
 	var stderr bytes.Buffer
-	recorder := telemetry.New(&stderr)
-	httpServer := httptest.NewServer(NewHTTPHandler(NewWithTelemetry(&telemetryDevice{}, "test", recorder, telemetry.TransportHTTP), ""))
+	recorder := telemetry.New(&stderr, "test")
+	httpServer := httptest.NewServer(NewHTTPHandler(NewWithTelemetry(&privacyTelemetryDevice{}, "test", recorder, telemetry.TransportHTTP), ""))
 	defer httpServer.Close()
 	clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "http-telemetry-test", Version: "test"}, nil).Connect(
 		context.Background(),
@@ -152,7 +159,7 @@ func TestHTTPToolTelemetryUsesHTTPTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := clientSession.CallTool(context.Background(), &mcp.CallToolParams{Name: ListDevicesToolName})
+	result, err := clientSession.CallTool(context.Background(), &mcp.CallToolParams{Name: GetStatusToolName, Arguments: map[string]any{"device": sentinel}})
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("CallTool = %#v, %v", result, err)
 	}
@@ -168,14 +175,128 @@ func TestHTTPToolTelemetryUsesHTTPTransport(t *testing.T) {
 	if err := json.NewDecoder(&stderr).Decode(&event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Transport != telemetry.TransportHTTP || event.Operation != telemetry.OperationInventory || event.Stage != telemetry.StageTool {
+	if event.Transport != telemetry.TransportHTTP || event.Operation != telemetry.OperationStatus || event.Stage != telemetry.StageTool {
 		t.Fatalf("event = %#v", event)
+	}
+	for _, prohibited := range []string{sentinel, "PRIVATE-device", "PRIVATE-firmware", "PRIVATE-raw-config-token"} {
+		if strings.Contains(stderr.String(), prohibited) {
+			t.Fatalf("HTTP telemetry retained %q: %s", prohibited, stderr.String())
+		}
+	}
+}
+
+type failingTelemetryWriter struct{}
+
+func (failingTelemetryWriter) Write([]byte) (int, error) {
+	return 0, errors.New("PRIVATE-telemetry-writer-error")
+}
+
+type slowTelemetryWriter struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (writer *slowTelemetryWriter) Write(data []byte) (int, error) {
+	writer.once.Do(func() {
+		close(writer.started)
+		<-writer.release
+	})
+	return len(data), nil
+}
+
+func TestMCPResultIgnoresFailingTelemetrySink(t *testing.T) {
+	for _, transport := range []string{telemetry.TransportStdio, telemetry.TransportHTTP} {
+		t.Run(transport, func(t *testing.T) {
+			recorder := telemetry.New(failingTelemetryWriter{}, "test")
+			client, cleanup := connectTelemetryClient(t, transport, recorder)
+			defer cleanup()
+			result, err := client.CallTool(context.Background(), &mcp.CallToolParams{Name: ListDevicesToolName})
+			if err != nil || result == nil || result.IsError {
+				t.Fatalf("CallTool = %#v, %v", result, err)
+			}
+			if err := recorder.Close(context.Background()); err != nil {
+				t.Fatalf("Close propagated sink failure: %v", err)
+			}
+		})
+	}
+}
+
+func TestMCPResultDoesNotWaitForSlowTelemetrySink(t *testing.T) {
+	for _, transport := range []string{telemetry.TransportStdio, telemetry.TransportHTTP} {
+		t.Run(transport, func(t *testing.T) {
+			writer := &slowTelemetryWriter{started: make(chan struct{}), release: make(chan struct{})}
+			recorder := telemetry.New(writer, "test")
+			client, cleanup := connectTelemetryClient(t, transport, recorder)
+			defer cleanup()
+			callDone := make(chan error, 1)
+			go func() {
+				result, err := client.CallTool(context.Background(), &mcp.CallToolParams{Name: ListDevicesToolName})
+				if err == nil && (result == nil || result.IsError) {
+					err = errors.New("successful tool returned an error result")
+				}
+				callDone <- err
+			}()
+			select {
+			case <-writer.started:
+			case <-time.After(time.Second):
+				close(writer.release)
+				t.Fatal("telemetry sink was not invoked")
+			}
+			select {
+			case err := <-callDone:
+				close(writer.release)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(100 * time.Millisecond):
+				close(writer.release)
+				<-callDone
+				t.Fatal("slow telemetry sink delayed MCP result")
+			}
+			if err := recorder.Close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func connectTelemetryClient(t *testing.T, transport string, recorder *telemetry.Recorder) (*mcp.ClientSession, func()) {
+	t.Helper()
+	server := NewWithTelemetry(&telemetryDevice{}, "test", recorder, transport)
+	if transport == telemetry.TransportHTTP {
+		httpServer := httptest.NewServer(NewHTTPHandler(server, ""))
+		client, err := mcp.NewClient(&mcp.Implementation{Name: "telemetry-sink-test", Version: "test"}, nil).Connect(
+			context.Background(), &mcp.StreamableClientTransport{Endpoint: httpServer.URL + MCPPath}, nil,
+		)
+		if err != nil {
+			httpServer.Close()
+			t.Fatal(err)
+		}
+		return client, func() {
+			_ = client.Close()
+			httpServer.Close()
+		}
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := mcp.NewClient(&mcp.Implementation{Name: "telemetry-sink-test", Version: "test"}, nil).Connect(context.Background(), clientTransport, nil)
+	if err != nil {
+		_ = serverSession.Close()
+		t.Fatal(err)
+	}
+	return client, func() {
+		_ = client.Close()
+		_ = serverSession.Close()
 	}
 }
 
 func TestToolTelemetryUsesFinalOutputSchemaFailure(t *testing.T) {
 	var stderr bytes.Buffer
-	recorder := telemetry.New(&stderr)
+	recorder := telemetry.New(&stderr, "test")
 	outputSchema, err := jsonschema.For[PowerResult](nil)
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +348,7 @@ func TestToolTelemetryUsesFinalOutputSchemaFailure(t *testing.T) {
 func TestToolTelemetryProhibitsSensitiveInputsOutputsAndErrors(t *testing.T) {
 	const sentinel = "PRIVATE-SENTINEL-typed-image-url-path-token-config-firmware-rpc-child"
 	var stderr bytes.Buffer
-	recorder := telemetry.New(&stderr)
+	recorder := telemetry.New(&stderr, "test")
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := NewWithTelemetry(&privacyTelemetryDevice{}, "test", recorder, telemetry.TransportStdio).Connect(context.Background(), serverTransport, nil)
 	if err != nil {

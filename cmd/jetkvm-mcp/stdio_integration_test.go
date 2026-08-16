@@ -284,7 +284,7 @@ func TestRunStdioOperationTelemetryKeepsStdoutProtocolOnly(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("stdio runtime did not stop")
 	}
-	if strings.Contains(stdout.String(), "jetkvm.operation.v1") {
+	if strings.Contains(stdout.String(), "jetkvm.operation.v") {
 		t.Fatalf("protocol stdout contains telemetry: %q", stdout.String())
 	}
 	if strings.Contains(stderr.String(), privateSentinel) {
@@ -306,7 +306,7 @@ func TestRunStdioOperationTelemetryKeepsStdoutProtocolOnly(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			t.Fatalf("stderr JSON line %q: %v", line, err)
 		}
-		if event.Schema != "jetkvm.operation.v1" || event.Transport != "stdio" {
+		if event.Schema != "jetkvm.operation.v2" || event.Transport != "stdio" {
 			t.Fatalf("event = %#v", event)
 		}
 		toolSeen = toolSeen || event.Operation == "inventory" && event.Stage == "tool" && event.Code == "success" && event.Outcome == "succeeded"
