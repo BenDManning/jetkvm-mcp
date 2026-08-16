@@ -67,18 +67,15 @@ func TestServeHTTPStopsSlowBodiesAfterFifteenSeconds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	started := time.Now()
-	request := "POST /mcp HTTP/1.1\r\n" +
-		"Host: " + address + "\r\n" +
-		"Content-Type: application/json\r\n" +
-		"Accept: application/json, text/event-stream\r\n" +
-		"Mcp-Protocol-Version: 2026-07-28\r\n" +
-		"Mcp-Method: server/discover\r\n" +
-		"Content-Length: 128\r\n\r\n{"
-	if _, err := io.WriteString(connection, request); err != nil {
+	if _, err := io.WriteString(connection, incompleteMCPRequestHeaders(address)); err != nil {
 		t.Fatal(err)
 	}
-	if err := connection.SetReadDeadline(started.Add(17 * time.Second)); err != nil {
+	time.Sleep(4 * time.Second)
+	bodyStarted := time.Now()
+	if _, err := io.WriteString(connection, "\r\n{"); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.SetReadDeadline(bodyStarted.Add(17 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := io.ReadAll(connection); err != nil {
@@ -88,9 +85,39 @@ func TestServeHTTPStopsSlowBodiesAfterFifteenSeconds(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	elapsed := time.Since(started)
+	elapsed := time.Since(bodyStarted)
 	if elapsed < 14*time.Second || elapsed > 17*time.Second {
-		t.Fatalf("slow body stopped after %s, want approximately fifteen seconds", elapsed)
+		t.Fatalf("slow body stopped after %s after four seconds spent on headers, want approximately fifteen seconds", elapsed)
+	}
+}
+
+func TestServeHTTPClosesRejectedRequestsWithUnreadBodies(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	address, done := startHTTPRuntime(t, ctx, mcpserver.New(nil, "test"))
+	defer stopHTTPRuntime(t, cancel, done)
+
+	connection, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	started := time.Now()
+	if _, err := io.WriteString(connection, incompleteMCPRequestHeaders("untrusted.example.invalid")+"\r\n{"); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.SetReadDeadline(started.Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	response, err := io.ReadAll(connection)
+	if err != nil {
+		var networkError net.Error
+		if errors.As(err, &networkError) && networkError.Timeout() {
+			t.Fatal("server tried to drain an unread rejected body without a deadline")
+		}
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(response), "403 Forbidden") {
+		t.Fatalf("response = %q, want a forbidden rejection", response)
 	}
 }
 
@@ -246,16 +273,7 @@ func TestServeHTTPForceClosesAfterFiveSecondDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	request := "POST /mcp HTTP/1.1\r\n" +
-		"Host: " + address + "\r\n" +
-		"Content-Type: application/json\r\n" +
-		"Accept: application/json, text/event-stream\r\n" +
-		"Mcp-Protocol-Version: 2026-07-28\r\n" +
-		"Mcp-Method: server/discover\r\n" +
-		"Content-Length: 128\r\n\r\n{"
-	if _, err := io.WriteString(connection, request); err != nil {
-		t.Fatal(err)
-	}
+	writeIncompleteMCPRequest(t, connection, address)
 	time.Sleep(50 * time.Millisecond)
 
 	started := time.Now()
@@ -425,4 +443,21 @@ func stopHTTPRuntime(t *testing.T, cancel context.CancelFunc, done <-chan error)
 	case <-time.After(7 * time.Second):
 		t.Fatal("HTTP runtime did not stop")
 	}
+}
+
+func writeIncompleteMCPRequest(t *testing.T, connection net.Conn, address string) {
+	t.Helper()
+	if _, err := io.WriteString(connection, incompleteMCPRequestHeaders(address)+"\r\n{"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func incompleteMCPRequestHeaders(address string) string {
+	return "POST /mcp HTTP/1.1\r\n" +
+		"Host: " + address + "\r\n" +
+		"Content-Type: application/json\r\n" +
+		"Accept: application/json, text/event-stream\r\n" +
+		"Mcp-Protocol-Version: 2026-07-28\r\n" +
+		"Mcp-Method: server/discover\r\n" +
+		"Content-Length: 128\r\n"
 }

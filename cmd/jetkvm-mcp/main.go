@@ -278,11 +278,40 @@ func serveHTTP(ctx context.Context, mcpServer *mcp.Server, address, bearerToken 
 	if err != nil {
 		return err
 	}
+	handler := mcpserver.NewHTTPHandler(mcpServer, bearerToken, allowedOrigins...)
 	httpServer := &http.Server{
-		Handler:           mcpserver.NewHTTPHandler(mcpServer, bearerToken, allowedOrigins...),
+		Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			// Server.ReadTimeout includes time spent reading headers. Start the
+			// independent body-read budget only after header admission.
+			controller := http.NewResponseController(response)
+			if err := controller.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
+				request.Close = true
+				response.Header().Set("Connection", "close")
+				http.Error(response, "request body deadline unavailable", http.StatusInternalServerError)
+				return
+			}
+			body := &bodyReadDeadline{
+				ReadCloser: request.Body,
+				request:    request,
+				response:   response,
+				controller: controller,
+				remaining:  request.ContentLength,
+				complete:   request.Body == nil || request.Body == http.NoBody || request.ContentLength == 0,
+			}
+			defer func() {
+				if body.complete {
+					_ = controller.SetReadDeadline(time.Time{})
+				} else {
+					body.closeConnection()
+				}
+			}()
+			request.Body = body
+			handler.ServeHTTP(response, request)
+		}),
 		BaseContext:       func(net.Listener) context.Context { return ctx },
-		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
-		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 	fmt.Fprintf(stderr, "jetkvm-mcp: serving MCP Streamable HTTP on %s%s\n", listener.Addr(), mcpserver.MCPPath)
 	done := make(chan error, 1)
@@ -317,6 +346,38 @@ func serveHTTP(ctx context.Context, mcpServer *mcp.Server, address, bearerToken 
 		}
 		return err
 	}
+}
+
+// bodyReadDeadline prevents clearing a request's read deadline before either
+// the declared body is consumed or the connection is made non-reusable.
+type bodyReadDeadline struct {
+	io.ReadCloser
+	request    *http.Request
+	response   http.ResponseWriter
+	controller *http.ResponseController
+	remaining  int64
+	complete   bool
+}
+
+func (body *bodyReadDeadline) Read(buffer []byte) (int, error) {
+	count, err := body.ReadCloser.Read(buffer)
+	if body.remaining > 0 {
+		body.remaining -= int64(count)
+		body.complete = body.remaining <= 0
+	}
+	if errors.Is(err, io.EOF) {
+		body.complete = true
+	} else if err != nil {
+		body.complete = false
+		body.closeConnection()
+	}
+	return count, err
+}
+
+func (body *bodyReadDeadline) closeConnection() {
+	body.request.Close = true
+	body.response.Header().Set("Connection", "close")
+	_ = body.controller.SetReadDeadline(time.Now())
 }
 
 func reportedVersion() string {

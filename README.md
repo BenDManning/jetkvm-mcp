@@ -165,8 +165,8 @@ Every admitted public endpoint origin must be listed exactly under `http.allowed
 The server does not emit CORS response headers. An admitted same-origin `OPTIONS` request remains subject to any configured bearer and then receives the endpoint's normal `405 Method Not Allowed`; an invalid or foreign preflight receives `403 Forbidden` before bearer authentication. Loopback and `localhost` Hosts remain trusted without an allowlist, but a present Origin must still use the same loopback scheme and authority.
 
 Each `/mcp` request body is limited to 1 MiB. HTTP permits five seconds to read
-headers, 15 seconds to read the request including its body, and 60 seconds for
-an idle connection. Tool-specific operation deadlines own response duration;
+headers, then 15 seconds to read the body, and 60 seconds for an idle
+connection. Tool-specific operation deadlines own response duration;
 there is no global write timeout. SIGINT and SIGTERM cancel stdio and active
 HTTP requests through the same process context. HTTP then drains for at most
 five seconds before force-closing remaining connections. An interrupted
@@ -204,7 +204,10 @@ public origin under `http.allowed_origins`. The server deliberately ignores
 `Forwarded` and `X-Forwarded-*`; those headers cannot grant admission or replace
 the public `Host`/`Origin` checks. Keep the backend on loopback or a protected
 network, cap proxy request bodies at no more than 1 MiB, and do not add CORS or
-device probes at the proxy.
+device probes at the proxy. During shutdown, stop routing new requests to the
+backend, allow existing proxy requests to drain, send SIGTERM to the server,
+and keep established backend connections available for longer than its
+five-second drain before either layer force-closes them.
 
 ## MCP tools
 
