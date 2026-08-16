@@ -6,7 +6,7 @@ Map canonical triage roles only to semantically compatible labels that already e
 | --- | --- |
 | `needs-triage` | _unconfigured_ |
 | `needs-info` | `question` |
-| `ready-for-agent` | _unconfigured_ |
+| `ready-for-agent` | `ready-for-agent` |
 | `ready-for-human` | _unconfigured_ |
 | `wontfix` | `wontfix` |
 
