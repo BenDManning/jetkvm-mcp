@@ -158,6 +158,21 @@ func rawHTTPProtocolCall(t *testing.T, version string, body []byte) (int, []byte
 	return response.Code, response.Body.Bytes()
 }
 
+func TestHTTPProtocolGuardRejectsOversizedRequestBody(t *testing.T) {
+	handler := NewHTTPHandler(New(&recordingDevice{}, "test"), "")
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1"+MCPPath, strings.NewReader(strings.Repeat(" ", (1<<20)+1)))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("Mcp-Protocol-Version", SupportedProtocolVersion)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body=%q", response.Code, http.StatusRequestEntityTooLarge, response.Body.String())
+	}
+}
+
 func TestProtocolVersionStdioHelperProcess(t *testing.T) {
 	if os.Getenv(protocolVersionStdioHelperEnvironment) != "1" {
 		return

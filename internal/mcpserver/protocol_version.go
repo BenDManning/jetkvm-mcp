@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -14,6 +16,11 @@ import (
 
 // SupportedProtocolVersion is the complete JetKVM MCP v1 wire-version set.
 const SupportedProtocolVersion = "2026-07-28"
+
+const (
+	maxMCPRequestBodyBytes    = int64(1 << 20)
+	mcpRequestBodyReadTimeout = 15 * time.Second
+)
 
 // Server keeps SDK protocol compatibility from expanding the product's public
 // compatibility surface. Feature registration remains owned by the SDK server;
@@ -141,25 +148,21 @@ func protocolVersionDiscoveryMiddleware(next mcp.MethodHandler) mcp.MethodHandle
 
 func requireSupportedHTTPProtocol(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		body, err := io.ReadAll(request.Body)
+		body, err := readMCPRequestBody(response, request)
 		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				http.Error(response, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
 		}
-		request.Body.Close()
 		request.Body = io.NopCloser(bytes.NewReader(body))
 		httpVersion := request.Header.Get("Mcp-Protocol-Version")
-		message, err := jsonrpc.DecodeMessage(body)
-		if err != nil {
-			if httpVersion != SupportedProtocolVersion {
-				http.Error(response, "unsupported protocol version", http.StatusBadRequest)
-				return
-			}
-			next.ServeHTTP(response, request)
-			return
-		}
+		message, decodeErr := jsonrpc.DecodeMessage(body)
 		call, ok := message.(*jsonrpc.Request)
-		if !ok {
+		if decodeErr != nil || !ok {
 			if httpVersion != SupportedProtocolVersion {
 				http.Error(response, "unsupported protocol version", http.StatusBadRequest)
 				return
@@ -181,4 +184,15 @@ func requireSupportedHTTPProtocol(next http.Handler) http.Handler {
 		response.WriteHeader(http.StatusBadRequest)
 		_, _ = response.Write(encoded)
 	})
+}
+
+func readMCPRequestBody(response http.ResponseWriter, request *http.Request) ([]byte, error) {
+	controller := http.NewResponseController(response)
+	deadlineSet := controller.SetReadDeadline(time.Now().Add(mcpRequestBodyReadTimeout)) == nil
+	if deadlineSet {
+		defer controller.SetReadDeadline(time.Time{})
+	}
+	body := http.MaxBytesReader(response, request.Body, maxMCPRequestBodyBytes)
+	defer body.Close()
+	return io.ReadAll(body)
 }
