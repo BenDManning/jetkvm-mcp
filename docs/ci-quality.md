@@ -62,7 +62,7 @@ pull requests.
 | Minimum Go | Go 1.25.13 with `GOTOOLCHAIN=local` | `GOTOOLCHAIN=go1.25.13 make ci-minimum` | One ordinary full test and server build against the module's declared minimum |
 | Go quality | Go 1.26.6 | `GOTOOLCHAIN=go1.26.6 make ci-quality` | Format, tidy, module integrity, one race/coverage suite, vet, pinned analyzers, reachable vulnerabilities, fuzz smoke, and Linux native cross-builds |
 | MCP protocol | Go 1.26.6 / Node 22.22.0 | `GOTOOLCHAIN=go1.26.6 make protocol-gates` | One server build followed by pinned conformance and Inspector scenarios from `testdata/mcp-gates/pins.json` |
-| Container | Docker Buildx | `make container-verify` | One final amd64 image and one final arm64 image, each with runtime smokes |
+| Container | Docker Buildx / Go 1.26.6 tracked Syft | `make container-verify` | One final amd64 image and one final arm64 image, each with runtime smokes and inspected SPDX package identity |
 
 `GOTOOLCHAIN=local` in CI prevents the minimum lane from silently downloading a
 newer compiler. A local machine may use `GOTOOLCHAIN=go1.25.13` to select the
