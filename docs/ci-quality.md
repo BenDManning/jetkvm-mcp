@@ -95,9 +95,10 @@ same compiler before running `make ci-minimum`.
 - `make verify`: tests, vet, and supported release cross-builds.
 - `make protocol-gates`: build and run the pinned MCP conformance/Inspector
   harness. `MCP_GATE_SERVER` and `MCP_GATE_DIR` may redirect temporary outputs.
-- `make container-verify`: build each final platform image once and smoke its
-  injected version, FFmpeg executable, UID/GID, and offline configuration
-  validation.
+- `make container-verify`: build each final platform image once and verify its
+  OCI metadata, embedded version and architecture, UID/GID, resolved Debian and
+  FFmpeg identities, network-isolated configuration validation, read-only-root
+  health startup, and actual H.264-to-PNG decoding.
 
 ## Coverage and evidence
 

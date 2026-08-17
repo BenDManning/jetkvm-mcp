@@ -61,7 +61,7 @@ func TestCITargetsProduceNonOverlappingEvidence(t *testing.T) {
 
 func TestContainerTargetBuildsAndSmokesEachFinalImageOnce(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
-	output := dryRun(t, root, "container-verify")
+	output := dryRun(t, root, "container-verify", "CONTAINER_CREATED=1970-01-01T00:00:00Z")
 
 	for _, platform := range []string{"linux/amd64", "linux/arm64"} {
 		build := "docker buildx build --platform " + platform
@@ -71,12 +71,13 @@ func TestContainerTargetBuildsAndSmokesEachFinalImageOnce(t *testing.T) {
 	}
 	for _, required := range []string{
 		"--build-arg VERSION=ci",
+		"--build-arg SOURCE=https://github.com/BenDManning/jetkvm-mcp",
+		"--build-arg REVISION=",
+		"--build-arg CREATED=1970-01-01T00:00:00Z",
 		"--load --tag jetkvm-mcp:ci-amd64",
 		"--load --tag jetkvm-mcp:ci-arm64",
-		"jetkvm-mcp ci",
-		"--entrypoint ffmpeg",
-		"--entrypoint id",
-		"config validate --config /config.yaml",
+		"scripts/smoke-container.sh jetkvm-mcp:ci-amd64 linux/amd64 ci",
+		"scripts/smoke-container.sh jetkvm-mcp:ci-arm64 linux/arm64 ci",
 	} {
 		if !strings.Contains(output, required) {
 			t.Errorf("container-verify output does not contain %q\n%s", required, output)
