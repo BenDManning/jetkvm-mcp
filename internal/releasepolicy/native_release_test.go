@@ -146,8 +146,10 @@ func TestHostedNativeRehearsalUsesKeylessConstrainedIdentityWithoutPublishing(t 
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := workflow.On["workflow_dispatch"]; len(workflow.On) != 1 || !ok {
-		t.Errorf("workflow triggers = %#v, want workflow_dispatch only", workflow.On)
+	_, hasDispatch := workflow.On["workflow_dispatch"]
+	_, hasCall := workflow.On["workflow_call"]
+	if len(workflow.On) != 2 || !hasDispatch || !hasCall {
+		t.Errorf("workflow triggers = %#v, want workflow_dispatch and workflow_call", workflow.On)
 	}
 	if !reflect.DeepEqual(workflow.Permissions, map[string]string{"contents": "read"}) {
 		t.Errorf("default workflow permissions = %#v, want contents: read", workflow.Permissions)
@@ -163,19 +165,28 @@ func TestHostedNativeRehearsalUsesKeylessConstrainedIdentityWithoutPublishing(t 
 
 	for _, expected := range []string{
 		"workflow_dispatch:",
+		"workflow_call:",
+		"release_ref:",
+		"RELEASE_IDENTITY_REF: ${{ inputs.release_ref || github.ref }}",
+		"RELEASE_IDENTITY_TRIGGER: ${{ inputs.release_ref && 'push' || 'workflow_dispatch' }}",
+		"REUSABLE_RELEASE_REF: ${{ inputs.release_ref }}",
+		"[[ ${REUSABLE_RELEASE_REF} =~ ^refs/tags/v",
+		"[[ ${GITHUB_REF} == refs/heads/main ]]",
+		"[[ ${GITHUB_REF} == ${RELEASE_IDENTITY_REF} ]]",
 		"contents: read",
 		"id-token: write",
 		"attestations: write",
 		"make release-snapshot RELEASE_VERIFY_ARM64=1",
 		"cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt",
 		"cosign verify-blob",
-		"--certificate-identity https://github.com/${GITHUB_REPOSITORY}/.github/workflows/native-release.yml@${GITHUB_REF}",
+		"--certificate-identity https://github.com/${GITHUB_REPOSITORY}/.github/workflows/native-release.yml@${RELEASE_IDENTITY_REF}",
 		"--certificate-github-workflow-sha ${GITHUB_SHA}",
+		"--certificate-github-workflow-trigger ${RELEASE_IDENTITY_TRIGGER}",
 		"uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2",
 		"subject-checksums: dist/checksums.txt",
 		"gh attestation verify",
 		"--signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/native-release.yml",
-		"--source-ref ${GITHUB_REF}",
+		"--source-ref ${RELEASE_IDENTITY_REF}",
 		"--source-digest ${GITHUB_SHA}",
 	} {
 		if !strings.Contains(text, expected) {
@@ -183,7 +194,7 @@ func TestHostedNativeRehearsalUsesKeylessConstrainedIdentityWithoutPublishing(t 
 		}
 	}
 	for _, forbidden := range []string{
-		"contents: write", "packages: write", "pull_request_target", "secrets.", "cosign.key", "--key", "gh release create", "goreleaser release --clean", "push:", "tags:",
+		"contents: write", "packages: write", "pull_request_target", "secrets.", "cosign.key", "--key", "gh release create", "goreleaser release --clean", "--certificate-github-workflow-trigger workflow_dispatch", "push:", "tags:",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("native release workflow unexpectedly contains %q", forbidden)

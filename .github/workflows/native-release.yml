@@ -1,6 +1,12 @@
 name: Native release rehearsal
 
 on:
+  workflow_call:
+    inputs:
+      release_ref:
+        description: Exact protected version tag ref supplied by the integrated release workflow
+        required: true
+        type: string
   workflow_dispatch:
 
 permissions:
@@ -17,6 +23,9 @@ jobs:
       attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
+      RELEASE_IDENTITY_REF: ${{ inputs.release_ref || github.ref }}
+      RELEASE_IDENTITY_TRIGGER: ${{ inputs.release_ref && 'push' || 'workflow_dispatch' }}
+      REUSABLE_RELEASE_REF: ${{ inputs.release_ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,6 +41,15 @@ jobs:
         with:
           image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
           platforms: arm64
+      - name: Enforce rehearsal and protected-tag invocation boundaries
+        run: |
+          set -euo pipefail
+          if [[ -n ${REUSABLE_RELEASE_REF} ]]; then
+            [[ ${REUSABLE_RELEASE_REF} =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          else
+            [[ ${GITHUB_REF} == refs/heads/main ]]
+          fi
+          [[ ${GITHUB_REF} == ${RELEASE_IDENTITY_REF} ]]
       - name: Build and verify native subjects without publishing
         run: make release-snapshot RELEASE_VERIFY_ARM64=1
       - name: Keylessly sign and verify the checksum manifest
@@ -42,12 +60,12 @@ jobs:
           cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt
           cosign verify-blob \
             --bundle dist/checksums.txt.sigstore.json \
-            --certificate-identity https://github.com/${GITHUB_REPOSITORY}/.github/workflows/native-release.yml@${GITHUB_REF} \
+            --certificate-identity https://github.com/${GITHUB_REPOSITORY}/.github/workflows/native-release.yml@${RELEASE_IDENTITY_REF} \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-github-workflow-repository ${GITHUB_REPOSITORY} \
-            --certificate-github-workflow-ref ${GITHUB_REF} \
+            --certificate-github-workflow-ref ${RELEASE_IDENTITY_REF} \
             --certificate-github-workflow-sha ${GITHUB_SHA} \
-            --certificate-github-workflow-trigger workflow_dispatch \
+            --certificate-github-workflow-trigger ${RELEASE_IDENTITY_TRIGGER} \
             dist/checksums.txt
       - name: Generate hosted provenance for every checksummed subject
         id: provenance
@@ -62,9 +80,9 @@ jobs:
             gh attestation verify "dist/${subject}" \
               --repo ${GITHUB_REPOSITORY} \
               --bundle dist/provenance.sigstore.json \
-              --cert-identity https://github.com/${GITHUB_REPOSITORY}/.github/workflows/native-release.yml@${GITHUB_REF} \
+              --cert-identity https://github.com/${GITHUB_REPOSITORY}/.github/workflows/native-release.yml@${RELEASE_IDENTITY_REF} \
               --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/native-release.yml \
-              --source-ref ${GITHUB_REF} \
+              --source-ref ${RELEASE_IDENTITY_REF} \
               --source-digest ${GITHUB_SHA} \
               --deny-self-hosted-runners
           done < dist/checksums.txt

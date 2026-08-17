@@ -106,9 +106,12 @@ same compiler before running `make ci-minimum`.
   configuration validation, read-only-root health startup, and actual
   H.264-to-PNG decoding.
 
-The manually dispatched `Native release rehearsal` workflow adds no release or
-package publication path. It uses GitHub Actions OIDC to create and immediately
-verify a keyless Cosign bundle for `checksums.txt` and hosted provenance for
+The `Native release rehearsal` is a release job, so it is the only current job
+with OIDC and attestation-write permissions. Direct dispatch is restricted to
+the exact default-branch ref; its reusable entry point accepts only an exact
+`refs/tags/vX.Y.Z` ref for the later integrated protected-tag workflow. It adds
+no release or package publication path. The job creates and immediately
+verifies a keyless Cosign bundle for `checksums.txt` and hosted provenance for
 every checksummed archive and SBOM. Verification constrains the repository,
 workflow, source ref, and source commit; the retained workflow artifact is
 rehearsal evidence, not a GitHub Release.
