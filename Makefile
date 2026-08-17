@@ -9,6 +9,7 @@ CONTAINER_SOURCE ?= https://github.com/BenDManning/jetkvm-mcp
 CONTAINER_REVISION ?= $(shell git rev-parse HEAD)
 CONTAINER_CREATED ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 CONTAINER_CREATED := $(CONTAINER_CREATED)
+CONTAINER_SBOM_DIR ?= /tmp/jetkvm-mcp-container-sbom
 CONTAINER_AMD64_IMAGE ?= jetkvm-mcp:ci-amd64
 CONTAINER_ARM64_IMAGE ?= jetkvm-mcp:ci-arm64
 
@@ -99,9 +100,11 @@ container:
 
 define verify-container-image
 docker buildx build --platform $(1) --build-arg VERSION=$(CONTAINER_VERSION) --build-arg SOURCE=$(CONTAINER_SOURCE) --build-arg REVISION=$(CONTAINER_REVISION) --build-arg CREATED=$(CONTAINER_CREATED) --load --tag $(2) .
-scripts/smoke-container.sh $(2) $(1) $(CONTAINER_VERSION) $(CONTAINER_SOURCE) $(CONTAINER_REVISION) $(CONTAINER_CREATED)
+GOTOOLCHAIN=go$(RELEASE_GO_VERSION) go -C tools tool syft docker:$(2) --output spdx-json=$(CONTAINER_SBOM_DIR)/$(3).spdx.json
+scripts/smoke-container.sh $(2) $(1) $(CONTAINER_VERSION) $(CONTAINER_SOURCE) $(CONTAINER_REVISION) $(CONTAINER_CREATED) $(CONTAINER_SBOM_DIR)/$(3).spdx.json
 endef
 
 container-verify:
-	$(call verify-container-image,linux/amd64,$(CONTAINER_AMD64_IMAGE))
-	$(call verify-container-image,linux/arm64,$(CONTAINER_ARM64_IMAGE))
+	mkdir -p $(CONTAINER_SBOM_DIR)
+	$(call verify-container-image,linux/amd64,$(CONTAINER_AMD64_IMAGE),amd64)
+	$(call verify-container-image,linux/arm64,$(CONTAINER_ARM64_IMAGE),arm64)

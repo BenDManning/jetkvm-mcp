@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 6 ]]; then
-  echo "usage: smoke-container.sh IMAGE PLATFORM VERSION SOURCE REVISION CREATED" >&2
+if [[ $# -ne 7 ]]; then
+  echo "usage: smoke-container.sh IMAGE PLATFORM VERSION SOURCE REVISION CREATED SPDX_SBOM" >&2
   exit 2
 fi
 
@@ -12,16 +12,21 @@ version=$3
 source=$4
 revision=$5
 created=$6
+sbom=$7
 architecture=${platform#linux/}
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 config_path=${repository_root}/testdata/container/config.yaml
 temporary_directory=$(mktemp -d)
 container_id=
+filesystem_container_id=
 
 cleanup() {
   if [[ -n ${container_id} ]]; then
     docker logs "${container_id}" >&2 || true
     docker rm --force "${container_id}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n ${filesystem_container_id} ]]; then
+    docker rm --force "${filesystem_container_id}" >/dev/null 2>&1 || true
   fi
   rm -r -- "${temporary_directory}"
 }
@@ -44,6 +49,18 @@ label() {
 [[ $(label org.opencontainers.image.licenses) == "MIT" ]]
 [[ $(label org.opencontainers.image.created) == "${created}" ]]
 
+filesystem_container_id=$(docker create "${image}")
+docker cp "${filesystem_container_id}:/usr/local/bin/jetkvm-mcp" "${temporary_directory}/jetkvm-mcp"
+docker rm "${filesystem_container_id}" >/dev/null
+filesystem_container_id=
+binary_identity=$(file --brief "${temporary_directory}/jetkvm-mcp")
+case ${architecture} in
+  amd64) [[ ${binary_identity} == *"x86-64"* ]] ;;
+  arm64) [[ ${binary_identity} == *"ARM aarch64"* ]] ;;
+  *) echo "unsupported container architecture: ${architecture}" >&2; exit 1 ;;
+esac
+printf 'embedded binary: %s\n' "${binary_identity}"
+
 if inspect '{{range .Config.Env}}{{println .}}{{end}}' | grep -Eiq '(^|_)(password|token|secret|credential)='; then
   echo "container image embeds a credential-shaped environment variable" >&2
   exit 1
@@ -53,15 +70,26 @@ fi
 [[ $(docker run --rm --entrypoint id "${image}" -u) == "10001" ]]
 [[ $(docker run --rm --entrypoint id "${image}" -g) == "10001" ]]
 
-docker run --rm --entrypoint sh "${image}" -euc '
-  test ! -e /config.yaml
-  test -s /usr/share/jetkvm-mcp/container-packages.txt
-  test -s /usr/share/jetkvm-mcp/ffmpeg-version.txt
-  grep -E "^ca-certificates(:[^[:space:]]+)?[[:space:]]" /usr/share/jetkvm-mcp/container-packages.txt
-  grep -E "^ffmpeg(:[^[:space:]]+)?[[:space:]]" /usr/share/jetkvm-mcp/container-packages.txt
-  cat /usr/share/jetkvm-mcp/container-packages.txt
-  sed -n "1p" /usr/share/jetkvm-mcp/ffmpeg-version.txt
-'
+docker run --rm --entrypoint test "${image}" ! -e /config.yaml
+container_packages=$(docker run --rm --entrypoint cat "${image}" /usr/share/jetkvm-mcp/container-packages.txt)
+ffmpeg_identity=$(docker run --rm --entrypoint sed "${image}" -n 1p /usr/share/jetkvm-mcp/ffmpeg-version.txt)
+printf '%s\n%s\n' "${container_packages}" "${ffmpeg_identity}"
+
+package_version() {
+  awk -v package="$1" '$1 == package { print $2 }' <<<"${container_packages}"
+}
+
+sbom_package_version() {
+  jq -er --arg package "$1" \
+    '[.packages[] | select(.name == $package) | .versionInfo] | unique | if length == 1 then .[0] else error("package identity is not unique") end' \
+    "${sbom}"
+}
+
+jq -e '.spdxVersion | startswith("SPDX-2.")' "${sbom}" >/dev/null
+[[ -n $(package_version ca-certificates) ]]
+[[ -n $(package_version ffmpeg) ]]
+[[ $(sbom_package_version ca-certificates) == "$(package_version ca-certificates)" ]]
+[[ $(sbom_package_version ffmpeg) == "$(package_version ffmpeg)" ]]
 
 docker run --rm \
   --network none \
@@ -118,5 +146,5 @@ if [[ ${healthy} != true ]]; then
   echo "container health endpoint did not become available" >&2
   exit 1
 fi
-grep -Eiq '^content-type: text/plain; charset=utf-8\r?$' "${temporary_directory}/headers"
+tr -d '\r' < "${temporary_directory}/headers" | grep -Eiq '^content-type: text/plain; charset=utf-8$'
 [[ $(<"${temporary_directory}/body") == "ok" ]]

@@ -97,8 +97,9 @@ same compiler before running `make ci-minimum`.
   harness. `MCP_GATE_SERVER` and `MCP_GATE_DIR` may redirect temporary outputs.
 - `make container-verify`: build each final platform image once and verify its
   OCI metadata, embedded version and architecture, UID/GID, resolved Debian and
-  FFmpeg identities, network-isolated configuration validation, read-only-root
-  health startup, and actual H.264-to-PNG decoding.
+  FFmpeg identities matched against a generated SPDX SBOM, network-isolated
+  configuration validation, read-only-root health startup, and actual
+  H.264-to-PNG decoding.
 
 ## Coverage and evidence
 
