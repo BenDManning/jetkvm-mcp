@@ -32,11 +32,11 @@ test:
 	go test ./...
 
 race:
-	go test -race ./...
+	JETKVM_TEST_REAL_FFMPEG=1 go test -race ./...
 
 race-coverage:
 	mkdir -p $(COVERAGE_DIR)
-	go test -race -covermode=atomic -coverprofile=$(COVERAGE_DIR)/coverage.out ./...
+	JETKVM_TEST_REAL_FFMPEG=1 go test -race -covermode=atomic -coverprofile=$(COVERAGE_DIR)/coverage.out ./...
 	go tool cover -func=$(COVERAGE_DIR)/coverage.out > $(COVERAGE_DIR)/coverage.txt
 
 vet:
@@ -93,16 +93,15 @@ update-tool-manifest:
 container:
 	docker build -t jetkvm-mcp:dev .
 
+define verify-container-image
+docker buildx build --platform $(1) --build-arg VERSION=$(CONTAINER_VERSION) --load --tag $(2) .
+test "$$(docker run --rm $(2) --version)" = "jetkvm-mcp $(CONTAINER_VERSION)"
+docker run --rm --entrypoint ffmpeg $(2) -version >/dev/null
+test "$$(docker run --rm --entrypoint id $(2) -u)" = "10001"
+test "$$(docker run --rm --entrypoint id $(2) -g)" = "10001"
+docker run --rm -e JETKVM_LAB_PASSWORD=ci-fixture -v "$(CURDIR)/config.example.yaml:/config.yaml:ro" $(2) config validate --config /config.yaml
+endef
+
 container-verify:
-	docker buildx build --platform linux/amd64 --build-arg VERSION=$(CONTAINER_VERSION) --load --tag $(CONTAINER_AMD64_IMAGE) .
-	test "$$(docker run --rm $(CONTAINER_AMD64_IMAGE) --version)" = "jetkvm-mcp $(CONTAINER_VERSION)"
-	docker run --rm --entrypoint ffmpeg $(CONTAINER_AMD64_IMAGE) -version >/dev/null
-	test "$$(docker run --rm --entrypoint id $(CONTAINER_AMD64_IMAGE) -u)" = "10001"
-	test "$$(docker run --rm --entrypoint id $(CONTAINER_AMD64_IMAGE) -g)" = "10001"
-	docker run --rm -e JETKVM_LAB_PASSWORD=ci-fixture -v "$(CURDIR)/config.example.yaml:/config.yaml:ro" $(CONTAINER_AMD64_IMAGE) config validate --config /config.yaml
-	docker buildx build --platform linux/arm64 --build-arg VERSION=$(CONTAINER_VERSION) --load --tag $(CONTAINER_ARM64_IMAGE) .
-	test "$$(docker run --rm $(CONTAINER_ARM64_IMAGE) --version)" = "jetkvm-mcp $(CONTAINER_VERSION)"
-	docker run --rm --entrypoint ffmpeg $(CONTAINER_ARM64_IMAGE) -version >/dev/null
-	test "$$(docker run --rm --entrypoint id $(CONTAINER_ARM64_IMAGE) -u)" = "10001"
-	test "$$(docker run --rm --entrypoint id $(CONTAINER_ARM64_IMAGE) -g)" = "10001"
-	docker run --rm -e JETKVM_LAB_PASSWORD=ci-fixture -v "$(CURDIR)/config.example.yaml:/config.yaml:ro" $(CONTAINER_ARM64_IMAGE) config validate --config /config.yaml
+	$(call verify-container-image,linux/amd64,$(CONTAINER_AMD64_IMAGE))
+	$(call verify-container-image,linux/arm64,$(CONTAINER_ARM64_IMAGE))

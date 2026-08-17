@@ -75,6 +75,8 @@ same compiler before running `make ci-minimum`.
 - `make tidy`: non-mutating `go mod tidy -diff` with workspace mode disabled.
 - `make module-verify`: module checksum verification.
 - `make test`, `make race`, `make vet`: repository tests, race detector, and vet.
+  The race target owns the opt-in real FFmpeg encode/decode integration; the
+  ordinary test target skips it so minimum-Go does not repeat that evidence.
 - `make race-coverage`: the single race-enabled full suite plus diagnostic
   coverage in `COVERAGE_DIR`.
 - `make staticcheck`: the Staticcheck version tracked by the root Go module.

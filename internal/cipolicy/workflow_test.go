@@ -32,15 +32,7 @@ type workflowStep struct {
 }
 
 func TestWorkflowExposesFourStableLeastPrivilegeChecks(t *testing.T) {
-	workflowPath := filepath.Join("..", "..", ".github", "workflows", "ci.yml")
-	data, err := os.ReadFile(workflowPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config workflow
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		t.Fatal(err)
-	}
+	config, raw := loadWorkflow(t)
 
 	wantJobs := map[string]string{
 		"quality":      "Go quality",
@@ -73,7 +65,6 @@ func TestWorkflowExposesFourStableLeastPrivilegeChecks(t *testing.T) {
 		t.Errorf("unexpected cancel-in-progress policy %q", config.Concurrency.CancelInProgress)
 	}
 
-	raw := string(data)
 	for _, forbidden := range []string{"pull_request_target", "secrets."} {
 		if strings.Contains(raw, forbidden) {
 			t.Errorf("workflow contains forbidden %q", forbidden)
@@ -83,7 +74,7 @@ func TestWorkflowExposesFourStableLeastPrivilegeChecks(t *testing.T) {
 }
 
 func TestWorkflowRunsEachEvidenceLaneOnceAndRetainsSanitizedArtifacts(t *testing.T) {
-	config := loadWorkflow(t)
+	config, _ := loadWorkflow(t)
 
 	assertRunContains(t, config.Jobs["quality"], "make ci-quality COVERAGE_DIR=\"${RUNNER_TEMP}/coverage\"")
 	assertRunContains(t, config.Jobs["minimum-go"], "make ci-minimum")
@@ -98,7 +89,7 @@ func TestWorkflowRunsEachEvidenceLaneOnceAndRetainsSanitizedArtifacts(t *testing
 	assertArtifact(t, config.Jobs["mcp-protocol"], "mcp-protocol-gates", "${{ runner.temp }}/mcp-gate-artifacts")
 }
 
-func loadWorkflow(t *testing.T) workflow {
+func loadWorkflow(t *testing.T) (workflow, string) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
 	if err != nil {
@@ -108,7 +99,7 @@ func loadWorkflow(t *testing.T) workflow {
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
-	return config
+	return config, string(data)
 }
 
 func assertCheckoutDoesNotPersistCredentials(t *testing.T, jobID string, job workflowJob) {

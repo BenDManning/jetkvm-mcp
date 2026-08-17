@@ -15,7 +15,7 @@ func TestCITargetsProduceNonOverlappingEvidence(t *testing.T) {
 		"gofmt -l .",
 		"go mod tidy -diff",
 		"go mod verify",
-		"go test -race -covermode=atomic -coverprofile=/tmp/ci-coverage/coverage.out ./...",
+		"JETKVM_TEST_REAL_FFMPEG=1 go test -race -covermode=atomic -coverprofile=/tmp/ci-coverage/coverage.out ./...",
 		"go vet ./...",
 		"go tool staticcheck ./...",
 		"go tool govulncheck ./...",
@@ -43,7 +43,7 @@ func TestCITargetsProduceNonOverlappingEvidence(t *testing.T) {
 		}
 	}
 	for _, duplicate := range []string{
-		"gofmt", "tidy", "mod verify", "go vet", "staticcheck", "govulncheck", "fuzz", "-race", "-cover",
+		"gofmt", "tidy", "mod verify", "go vet", "staticcheck", "govulncheck", "fuzz", "-race", "-cover", "JETKVM_TEST_REAL_FFMPEG",
 	} {
 		if strings.Contains(minimum, duplicate) {
 			t.Errorf("ci-minimum output unexpectedly contains %q\n%s", duplicate, minimum)
