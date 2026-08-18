@@ -125,7 +125,6 @@ func TestRecognizedTakeoverWinsWhenLossWasProcessedFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		close(session.closeDone)
 		_ = manager.Close(context.Background())
 	})
 	if _, err := manager.DebugRPC(context.Background(), "lab", methodPing, nil, false); err != nil {
@@ -142,6 +141,21 @@ func TestRecognizedTakeoverWinsWhenLossWasProcessedFirst(t *testing.T) {
 		select {
 		case <-deadline:
 			t.Fatal("loss was not classified as ownership uncertainty")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	close(session.closeDone)
+	deadline = time.After(time.Second)
+	for {
+		snapshot := manager.owners["lab"].Snapshot()
+		if snapshot.Ownership == ownerOwnershipUncertain && snapshot.Health == ownerHealthUnavailable {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("terminal cleanup did not complete with ownership uncertainty")
 		default:
 			time.Sleep(time.Millisecond)
 		}

@@ -718,9 +718,13 @@ func (owner *deviceOwner) loop() {
 			}
 
 		case ownerTakeoverRecognized:
-			if cleanup != nil && cleanup.generation.id == command.generation && cleanup.err == nil && cleanup.reply == nil && !stopping {
+			pendingTerminalCleanup := cleanup != nil && cleanup.generation.id == command.generation && cleanup.err == nil && cleanup.reply == nil && cleanup.takeoverReply == nil
+			completedTerminalCleanup := cleanup == nil && generation == nil && attempt == nil && ownership == ownerOwnershipUncertain && nextGeneration == command.generation
+			if !stopping && (pendingTerminalCleanup || completedTerminalCleanup) {
 				ownership = ownerOwnershipTakenOver
-				cleanup.target = ownerOwnershipTakenOver
+				if pendingTerminalCleanup {
+					cleanup.target = ownerOwnershipTakenOver
+				}
 				snapshot.Health = ownerHealthDegraded
 				failQueued(ownerResult{err: classifyOperationError(ErrSessionTakenOver, ToolOutcomeNotSent)})
 				publish()
@@ -756,7 +760,11 @@ func (owner *deviceOwner) loop() {
 				target := cleanup.target
 				reply := cleanup.reply
 				takeoverReply := cleanup.takeoverReply
-				if cleanup.generation.watchDone != nil {
+				if target == ownerOwnershipUncertain && reply == nil && takeoverReply == nil && recognizedTakeover(cleanup.generation.session) {
+					target = ownerOwnershipTakenOver
+				}
+				keepTakeoverWatch := target == ownerOwnershipUncertain && reply == nil && takeoverReply == nil
+				if cleanup.generation.watchDone != nil && !keepTakeoverWatch {
 					close(cleanup.generation.watchDone)
 				}
 				cleanup = nil
