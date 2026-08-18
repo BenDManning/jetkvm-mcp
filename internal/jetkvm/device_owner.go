@@ -229,11 +229,11 @@ type ownerGenerationState struct {
 }
 
 type ownerCleanupState struct {
-	generation *ownerGenerationState
-	target     ownerOwnership
-	err        error
-	reply      chan error
-	takeover   chan error
+	generation    *ownerGenerationState
+	target        ownerOwnership
+	err           error
+	reply         chan error
+	takeoverReply chan error
 }
 
 var nextOwnerID atomic.Uint64
@@ -470,7 +470,13 @@ func (owner *deviceOwner) loop() {
 		if generation == nil || stopping {
 			return
 		}
+		if recognizedTakeover(generation.session) {
+			return
+		}
 		for len(queue) != 0 {
+			if recognizedTakeover(generation.session) {
+				return
+			}
 			workerID := queue[0]
 			queue = queue[1:]
 			worker := workers[workerID]
@@ -629,7 +635,11 @@ func (owner *deviceOwner) loop() {
 				failQueued(ownerResult{err: command.err, panicValue: command.panicValue})
 				if takeoverReply != nil {
 					ownership = ownerOwnershipUncertain
-					takeoverReply <- ownerResultError(command.err, command.panicValue)
+					if command.cleanupErr != nil {
+						takeoverReply <- classifyOperationError(ErrOwnershipUncertain, ToolOutcomeFailed)
+					} else {
+						takeoverReply <- ownerResultError(command.err, command.panicValue)
+					}
 				}
 				if command.cleanupErr != nil && command.session != nil {
 					generationCtx, cancel := context.WithCancel(context.Background())
@@ -724,14 +734,14 @@ func (owner *deviceOwner) loop() {
 					cleanup.reply <- classifyOperationError(ErrOwnershipUncertain, ToolOutcomeFailed)
 					cleanup.reply = nil
 				}
-				if cleanup.takeover != nil {
-					cleanup.takeover <- classifyOperationError(ErrOwnershipUncertain, ToolOutcomeFailed)
-					cleanup.takeover = nil
+				if cleanup.takeoverReply != nil {
+					cleanup.takeoverReply <- classifyOperationError(ErrOwnershipUncertain, ToolOutcomeFailed)
+					cleanup.takeoverReply = nil
 				}
 			} else {
 				target := cleanup.target
 				reply := cleanup.reply
-				takeoverReply := cleanup.takeover
+				takeoverReply := cleanup.takeoverReply
 				cleanup = nil
 				ownership = target
 				snapshot.Health = ownerHealthUnavailable
@@ -784,8 +794,8 @@ func (owner *deviceOwner) loop() {
 			case len(workers) != 0 || len(queue) != 0 || owner.demand.Load() != 0 || attempt != nil || validation != nil:
 				command.reply <- busyNotSent()
 			case cleanup != nil && cleanup.err == nil:
-				if cleanup.reply == nil && cleanup.takeover == nil {
-					cleanup.takeover = command.reply
+				if cleanup.reply == nil && cleanup.takeoverReply == nil {
+					cleanup.takeoverReply = command.reply
 				} else {
 					command.reply <- busyNotSent()
 				}
@@ -797,7 +807,7 @@ func (owner *deviceOwner) loop() {
 				validation = &ownerValidationState{generation: generation.id, reply: command.reply}
 				go owner.runValidation(generation)
 			case cleanup != nil:
-				cleanup.takeover = command.reply
+				cleanup.takeoverReply = command.reply
 				cleanup.reply = nil
 				cleanup.err = nil
 				go owner.runCleanup(cleanup.generation)
@@ -998,6 +1008,11 @@ func classifyTerminalCompletion(session Session, class ownerOperationClass, err 
 		terminalErr = ErrSessionTakenOver
 	}
 	return classifyOperationError(terminalErr, outcome)
+}
+
+func recognizedTakeover(session ConnectedSession) bool {
+	takeover, ok := session.(interface{ RecognizedTakeover() bool })
+	return ok && takeover.RecognizedTakeover()
 }
 
 func (owner *deviceOwner) watchGeneration(generation uint64, done <-chan struct{}) {

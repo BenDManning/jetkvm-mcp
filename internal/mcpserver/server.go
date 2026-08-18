@@ -186,12 +186,12 @@ func newServerWithTelemetry(device Device, version string, captureTimeout time.D
 		return nil, devices, err
 	})
 
-	addReadTool(server, &mcp.Tool{
+	addMutationTool(server, &mcp.Tool{
 		Name:         TakeOverSessionToolName,
 		Title:        "Take over JetKVM session",
 		Description:  "Take over the authoritative operator session for a configured JetKVM. This may immediately displace an external authenticated operator without consent. It changes server session ownership, not appliance or attached-host state, and never authorizes replay of earlier work.",
 		OutputSchema: sessionTakeoverOutputSchema(),
-		Annotations:  annotations(true, false, false),
+		Annotations:  annotations(false, false, false),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input deviceInput) (*mcp.CallToolResult, SessionTakeoverResult, error) {
 		if err := validDevice(input.Device); err != nil {
 			return nil, SessionTakeoverResult{}, invalidInput(err)

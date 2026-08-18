@@ -20,6 +20,17 @@ type validationSession struct {
 	validationFinish  chan struct{}
 }
 
+type sessionAndErrorConnector struct {
+	session ConnectedSession
+	err     error
+	calls   int
+}
+
+func (connector *sessionAndErrorConnector) Connect(context.Context, DeviceConfig) (ConnectedSession, error) {
+	connector.calls++
+	return connector.session, connector.err
+}
+
 func (session *validationSession) Call(ctx context.Context, method string, _ any, result any) error {
 	if method != methodPing {
 		return nil
@@ -90,7 +101,7 @@ func TestManagerTakeOverSessionReacquiresFromStickyOwnership(t *testing.T) {
 			base, _ := url.Parse("https://jetkvm.invalid")
 			first := &deterministicConnectedSession{
 				fakeSession: &fakeSession{results: map[string]any{methodPing: "pong"}},
-				lost:        make(chan struct{}), takenOver: test.takenOver,
+				lost:        make(chan struct{}),
 			}
 			second := &residentSession{done: make(chan struct{})}
 			connector := &residentSequenceConnector{sessions: []ConnectedSession{first, second}}
@@ -102,6 +113,7 @@ func TestManagerTakeOverSessionReacquiresFromStickyOwnership(t *testing.T) {
 			if err := manager.owners["lab"].Run(context.Background(), func(context.Context, Session) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
+			first.takenOver = test.takenOver
 			close(first.lost)
 			deadline := time.After(time.Second)
 			for manager.owners["lab"].Snapshot().Ownership != test.wantState {
@@ -155,11 +167,30 @@ func TestManagerTakeOverSessionDoesNotConnectWhenPriorCleanupFails(t *testing.T)
 	}
 }
 
+func TestManagerTakeOverSessionReportsUncertaintyWhenFailedSetupCannotCleanUp(t *testing.T) {
+	base, _ := url.Parse("https://jetkvm.invalid")
+	session := &residentSession{done: make(chan struct{}), closeErr: context.DeadlineExceeded}
+	connector := &sessionAndErrorConnector{session: session, err: ErrDeviceUnreachable}
+	manager, err := NewManager([]DeviceConfig{{Name: "lab", BaseURL: *base}}, connector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	_, err = manager.TakeOverSession(context.Background(), "lab")
+	var classified *OperationError
+	if !errors.As(err, &classified) || classified.Code != "ownership_uncertain" || classified.Outcome != ToolOutcomeFailed || classified.Retryable {
+		t.Fatalf("failed setup cleanup = %#v", err)
+	}
+	if connector.calls != 1 || manager.owners["lab"].Snapshot().Ownership != ownerOwnershipUncertain {
+		t.Fatalf("connects=%d snapshot=%+v", connector.calls, manager.owners["lab"].Snapshot())
+	}
+}
+
 func TestManagerTakeOverSessionWaitsForAutomaticStickyCleanupBeforeConnecting(t *testing.T) {
 	base, _ := url.Parse("https://jetkvm.invalid")
 	first := &deterministicConnectedSession{
 		fakeSession: &fakeSession{results: map[string]any{methodPing: "pong"}},
-		lost:        make(chan struct{}), takenOver: true, closeStart: make(chan struct{}), closeDone: make(chan struct{}),
+		lost:        make(chan struct{}), closeStart: make(chan struct{}), closeDone: make(chan struct{}),
 	}
 	second := &residentSession{done: make(chan struct{})}
 	connector := &residentSequenceConnector{sessions: []ConnectedSession{first, second}}
@@ -171,6 +202,7 @@ func TestManagerTakeOverSessionWaitsForAutomaticStickyCleanupBeforeConnecting(t 
 	if err := manager.owners["lab"].Run(context.Background(), func(context.Context, Session) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
+	first.takenOver = true
 	close(first.lost)
 	<-first.closeStart
 	takeoverDone := make(chan error, 1)

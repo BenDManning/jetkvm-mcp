@@ -36,7 +36,7 @@ type rpcSession struct {
 	takeover  func()
 }
 
-func newRPCSession(parent context.Context, sender textSender, timeout time.Duration, takeover ...func()) *rpcSession {
+func newRPCSession(parent context.Context, sender textSender, timeout time.Duration, takeover func()) *rpcSession {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
@@ -45,9 +45,7 @@ func newRPCSession(parent context.Context, sender textSender, timeout time.Durat
 		ctx: ctx, cancel: cancel, sender: sender, timeout: timeout,
 		sendGate: make(chan struct{}, 1), pending: make(map[uint64]chan rpcOutcome),
 	}
-	if len(takeover) != 0 {
-		session.takeover = takeover[0]
-	}
+	session.takeover = takeover
 	session.sendGate <- struct{}{}
 	return session
 }

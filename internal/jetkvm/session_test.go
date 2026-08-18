@@ -32,7 +32,7 @@ func TestRPCSessionCorrelatesResultsAndMutationOmission(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			sender := &fakeTextSender{sent: make(chan string, 1)}
-			session := newRPCSession(context.Background(), sender, time.Second)
+			session := newRPCSession(context.Background(), sender, time.Second, nil)
 			defer session.Close()
 
 			var result struct {
@@ -80,7 +80,7 @@ func TestRPCSessionRecognizedTakeoverLatchesBeforeNotifying(t *testing.T) {
 func TestRPCSessionReturnsStableErrorsAndTimeout(t *testing.T) {
 	t.Run("protocol error", func(t *testing.T) {
 		sender := &fakeTextSender{sent: make(chan string, 1)}
-		session := newRPCSession(context.Background(), sender, time.Second)
+		session := newRPCSession(context.Background(), sender, time.Second, nil)
 		defer session.Close()
 		done := make(chan error, 1)
 		go func() { done <- session.Call(context.Background(), "missing", nil, nil) }()
@@ -97,7 +97,7 @@ func TestRPCSessionReturnsStableErrorsAndTimeout(t *testing.T) {
 
 	t.Run("timeout removes pending request", func(t *testing.T) {
 		sender := &fakeTextSender{sent: make(chan string, 1)}
-		session := newRPCSession(context.Background(), sender, 5*time.Millisecond)
+		session := newRPCSession(context.Background(), sender, 5*time.Millisecond, nil)
 		defer session.Close()
 		if err := session.Call(context.Background(), "ping", nil, new(string)); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("error = %v", err)
@@ -109,7 +109,7 @@ func TestRPCSessionReturnsStableErrorsAndTimeout(t *testing.T) {
 
 	t.Run("close releases caller", func(t *testing.T) {
 		sender := &fakeTextSender{sent: make(chan string, 1)}
-		session := newRPCSession(context.Background(), sender, time.Second)
+		session := newRPCSession(context.Background(), sender, time.Second, nil)
 		done := make(chan error, 1)
 		go func() { done <- session.Call(context.Background(), "ping", nil, new(string)) }()
 		<-sender.sent
@@ -122,7 +122,7 @@ func TestRPCSessionReturnsStableErrorsAndTimeout(t *testing.T) {
 
 func TestRPCSessionCancellationBeforeSendIsDefinitelyNotSent(t *testing.T) {
 	sender := &fakeTextSender{sent: make(chan string, 1)}
-	session := newRPCSession(context.Background(), sender, time.Second)
+	session := newRPCSession(context.Background(), sender, time.Second, nil)
 	defer session.Close()
 	<-session.sendGate
 
@@ -151,7 +151,7 @@ func TestRPCSessionCancellationBeforeSendIsDefinitelyNotSent(t *testing.T) {
 func TestRPCSessionDispatchPhasesClassifyMutationOutcomes(t *testing.T) {
 	t.Run("during send is unknown", func(t *testing.T) {
 		sender := &fakeTextSender{sent: make(chan string, 1), err: errors.New("transport write failed")}
-		session := newRPCSession(context.Background(), sender, time.Second)
+		session := newRPCSession(context.Background(), sender, time.Second, nil)
 		defer session.Close()
 		err := session.Call(context.Background(), "setATXPowerAction", nil, nil)
 		assertToolOutcome(t, err, ToolOutcomeUnknown)
@@ -159,7 +159,7 @@ func TestRPCSessionDispatchPhasesClassifyMutationOutcomes(t *testing.T) {
 
 	t.Run("after send before response is unknown", func(t *testing.T) {
 		sender := &fakeTextSender{sent: make(chan string, 1)}
-		session := newRPCSession(context.Background(), sender, 5*time.Millisecond)
+		session := newRPCSession(context.Background(), sender, 5*time.Millisecond, nil)
 		defer session.Close()
 		err := session.Call(context.Background(), "setATXPowerAction", nil, nil)
 		assertToolOutcome(t, err, ToolOutcomeUnknown)
@@ -167,7 +167,7 @@ func TestRPCSessionDispatchPhasesClassifyMutationOutcomes(t *testing.T) {
 
 	t.Run("cancellation after send is unknown", func(t *testing.T) {
 		sender := &fakeTextSender{sent: make(chan string, 1)}
-		session := newRPCSession(context.Background(), sender, time.Second)
+		session := newRPCSession(context.Background(), sender, time.Second, nil)
 		defer session.Close()
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
@@ -179,7 +179,7 @@ func TestRPCSessionDispatchPhasesClassifyMutationOutcomes(t *testing.T) {
 
 	t.Run("confirmed RPC failure is failed", func(t *testing.T) {
 		sender := &fakeTextSender{sent: make(chan string, 1)}
-		session := newRPCSession(context.Background(), sender, time.Second)
+		session := newRPCSession(context.Background(), sender, time.Second, nil)
 		defer session.Close()
 		done := make(chan error, 1)
 		go func() { done <- session.Call(context.Background(), "setATXPowerAction", nil, nil) }()
@@ -204,7 +204,7 @@ func assertToolOutcome(t *testing.T, err error, want string) {
 
 func TestRPCSessionAdmissionLimitIsBusyAndNotSent(t *testing.T) {
 	sender := &fakeTextSender{sent: make(chan string, 1)}
-	session := newRPCSession(context.Background(), sender, time.Second)
+	session := newRPCSession(context.Background(), sender, time.Second, nil)
 	defer session.Close()
 	for id := uint64(1); id <= maxPendingRPCRequests; id++ {
 		if err := session.addPending(id, make(chan rpcOutcome, 1)); err != nil {

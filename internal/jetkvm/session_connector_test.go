@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,7 +63,6 @@ func TestRecognizedTakeoverLatchesAndRejectsOrdinaryReconnect(t *testing.T) {
 	session := &deterministicConnectedSession{
 		fakeSession: &fakeSession{results: map[string]any{methodPing: "pong"}},
 		lost:        make(chan struct{}),
-		takenOver:   true,
 	}
 	connector := &deterministicConnector{session: session}
 	manager, err := NewManager([]DeviceConfig{{Name: "lab", BaseURL: *base}}, connector)
@@ -73,6 +73,7 @@ func TestRecognizedTakeoverLatchesAndRejectsOrdinaryReconnect(t *testing.T) {
 	if _, err := manager.DebugRPC(context.Background(), "lab", methodPing, nil, false); err != nil {
 		t.Fatal(err)
 	}
+	session.takenOver = true
 	close(session.lost)
 	deadline := time.After(time.Second)
 	for manager.owners["lab"].Snapshot().Ownership != ownerOwnershipTakenOver {
@@ -98,6 +99,54 @@ type terminalOperationSession struct {
 	done      chan struct{}
 	takenOver bool
 }
+
+type conclusiveMutationSession struct {
+	started chan struct{}
+	finish  chan struct{}
+	done    chan struct{}
+}
+
+type takeoverFenceSession struct {
+	done              chan struct{}
+	takenOver         bool
+	postTakeoverCalls atomic.Int32
+}
+
+func (session *takeoverFenceSession) Call(_ context.Context, method string, _ any, result any) error {
+	if method == methodPing {
+		if pong, ok := result.(*string); ok {
+			*pong = "pong"
+		}
+		return nil
+	}
+	session.postTakeoverCalls.Add(1)
+	return nil
+}
+func (*takeoverFenceSession) Upload(context.Context, string, io.Reader, int64) error { return nil }
+func (*takeoverFenceSession) CaptureH264(context.Context) ([]byte, time.Time, error) {
+	return nil, time.Time{}, nil
+}
+func (session *takeoverFenceSession) Done() <-chan struct{}    { return session.done }
+func (*takeoverFenceSession) Close(context.Context) error      { return nil }
+func (session *takeoverFenceSession) RecognizedTakeover() bool { return session.takenOver }
+
+func (session *conclusiveMutationSession) Call(_ context.Context, method string, _ any, result any) error {
+	if method == methodPing {
+		if pong, ok := result.(*string); ok {
+			*pong = "pong"
+		}
+		return nil
+	}
+	close(session.started)
+	<-session.finish
+	return nil
+}
+func (*conclusiveMutationSession) Upload(context.Context, string, io.Reader, int64) error { return nil }
+func (*conclusiveMutationSession) CaptureH264(context.Context) ([]byte, time.Time, error) {
+	return nil, time.Time{}, nil
+}
+func (session *conclusiveMutationSession) Done() <-chan struct{} { return session.done }
+func (*conclusiveMutationSession) Close(context.Context) error   { return nil }
 
 func (session *terminalOperationSession) Call(ctx context.Context, method string, _ any, result any) error {
 	if method == methodPing {
@@ -134,7 +183,7 @@ func TestTerminalGenerationClassifiesInconclusiveDispatchByOwnershipAndOperation
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base, _ := url.Parse("https://jetkvm.invalid")
-			session := &terminalOperationSession{started: make(chan struct{}), done: make(chan struct{}), takenOver: test.takenOver}
+			session := &terminalOperationSession{started: make(chan struct{}), done: make(chan struct{})}
 			manager, err := NewManager([]DeviceConfig{{Name: "lab", BaseURL: *base}}, &releaseConnector{session: session})
 			if err != nil {
 				t.Fatal(err)
@@ -151,12 +200,57 @@ func TestTerminalGenerationClassifiesInconclusiveDispatchByOwnershipAndOperation
 				result <- callErr
 			}()
 			<-session.started
+			session.takenOver = test.takenOver
 			close(session.done)
 			var classified *OperationError
 			if err := <-result; !errors.As(err, &classified) || classified.Code != test.wantCode || classified.Outcome != test.wantOutcome || classified.Retryable {
 				t.Fatalf("terminal operation = %#v, want %s/%s nonretryable", err, test.wantCode, test.wantOutcome)
 			}
 		})
+	}
+}
+
+func TestConclusiveMutationCompletionAfterGenerationLossRemainsSuccessful(t *testing.T) {
+	base, _ := url.Parse("https://jetkvm.invalid")
+	session := &conclusiveMutationSession{started: make(chan struct{}), finish: make(chan struct{}), done: make(chan struct{})}
+	manager, err := NewManager([]DeviceConfig{{Name: "lab", BaseURL: *base}}, &releaseConnector{session: session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	result := make(chan error, 1)
+	go func() {
+		_, callErr := manager.Power(context.Background(), "lab", mcpserver.PowerActionPressHostPowerButton, "")
+		result <- callErr
+	}()
+	<-session.started
+	close(session.done)
+	close(session.finish)
+	if err := <-result; err != nil {
+		t.Fatalf("conclusive mutation was discarded after loss: %v", err)
+	}
+}
+
+func TestRecognizedTakeoverFencesNewOwnerDispatchBeforeTerminalCommand(t *testing.T) {
+	base, _ := url.Parse("https://jetkvm.invalid")
+	session := &takeoverFenceSession{done: make(chan struct{})}
+	manager, err := NewManager([]DeviceConfig{{Name: "lab", BaseURL: *base}}, &releaseConnector{session: session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	if err := manager.owners["lab"].Run(context.Background(), func(context.Context, Session) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	session.takenOver = true
+	close(session.done)
+	_, err = manager.DebugRPC(context.Background(), "lab", methodLocalVersion, json.RawMessage(`{}`), false)
+	var classified *OperationError
+	if !errors.As(err, &classified) || classified.Code != "session_taken_over" || classified.Outcome != ToolOutcomeNotSent || classified.Retryable {
+		t.Fatalf("post-takeover work = %#v", err)
+	}
+	if calls := session.postTakeoverCalls.Load(); calls != 0 {
+		t.Fatalf("recognized takeover allowed %d new RPC dispatches", calls)
 	}
 }
 

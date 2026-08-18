@@ -39,7 +39,7 @@ func TestTakeOverSessionToolPublishesAndRoutesExactContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := findTool(t, listed.Tools, TakeOverSessionToolName)
-	if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint || tool.Annotations.IdempotentHint || tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
+	if tool.Annotations == nil || tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint || tool.Annotations.IdempotentHint || tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
 		t.Fatalf("annotations = %#v", tool.Annotations)
 	}
 	assertClosedObjectSchema(t, "input", tool.InputSchema, []string{"device"}, map[string][]string{})
