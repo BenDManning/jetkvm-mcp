@@ -1,0 +1,11 @@
+# Generated/build output
+/bin/**
+/dist/**
+coverage.out
+*.prof
+
+# Generated dependency inventory
+/THIRD_PARTY_NOTICES.md
+
+# Noise
+.DS_Store

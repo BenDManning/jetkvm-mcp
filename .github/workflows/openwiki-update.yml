@@ -1,0 +1,65 @@
+name: OpenWiki Update
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "openwiki/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: openwiki-update
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: openwiki-local
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+
+      - name: Configure npm install directory
+        run: |
+          echo "NPM_CONFIG_PREFIX=${RUNNER_TEMP}/npm-global" >> "${GITHUB_ENV}"
+          echo "NPM_CONFIG_CACHE=${RUNNER_TEMP}/npm-cache" >> "${GITHUB_ENV}"
+          echo "${RUNNER_TEMP}/npm-global/bin" >> "${GITHUB_PATH}"
+
+      - name: Install OpenWiki
+        run: npm install --global openwiki@0.3.3 mermaid@11.16.0 jsdom@29.1.1
+
+      - name: Update OpenWiki
+        run: openwiki code --update --print
+        env:
+          OPENWIKI_TELEMETRY_DISABLED: "1"
+          DO_NOT_TRACK: "1"
+          OPENWIKI_PROVIDER: openai-chatgpt
+          OPENWIKI_MODEL_ID: "gpt-5.6-terra"
+
+      - name: Create OpenWiki update pull request
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676
+        with:
+          add-paths: |
+            openwiki
+            AGENTS.md
+            CLAUDE.md
+          branch: openwiki/update
+          commit-message: "docs: update OpenWiki"
+          title: "docs: update OpenWiki"
+          body: |
+            Automated OpenWiki documentation update for changes merged to main.
