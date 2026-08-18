@@ -58,5 +58,5 @@ For a mutation error with `outcome: unknown`, do **not** blindly retry: it may h
 
 ## Backlog
 
-- **Git history:** `/openwiki/.last-update.json` records `32b313c75c2d22a7d3135753576b94dd204d16bd`, but `.openwikiignore` restricts this run from inspecting the current Git range. No history-derived claim is recorded.
+- **Git history:** `/openwiki/.last-update.json` records `b8bf8b5e6261ee198ebae23d8e59796005fe454c`, but `.openwikiignore` restricts this run from inspecting the current Git range. No history-derived claim is recorded.
 - **LangSmith observations:** no usable runtime-observation corpus was available beyond connection metadata, so no runtime-observation claim is recorded.
