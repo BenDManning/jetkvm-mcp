@@ -150,6 +150,10 @@ type ownerGenerationEnded struct{ generation uint64 }
 
 func (ownerGenerationEnded) ownerCommand() {}
 
+type ownerTakeoverRecognized struct{ generation uint64 }
+
+func (ownerTakeoverRecognized) ownerCommand() {}
+
 type ownerIdleExpired struct{ generation uint64 }
 
 func (ownerIdleExpired) ownerCommand() {}
@@ -226,6 +230,7 @@ type ownerGenerationState struct {
 	scheduler *generationScheduler
 	ctx       context.Context
 	cancel    context.CancelFunc
+	watchDone chan struct{}
 }
 
 type ownerCleanupState struct {
@@ -649,10 +654,10 @@ func (owner *deviceOwner) loop() {
 				}
 			} else if command.session != nil && !stopping && (len(queue) != 0 || takeoverReply != nil) {
 				generationCtx, cancel := context.WithCancel(context.Background())
-				generation = &ownerGenerationState{id: command.generation, session: command.session, scheduler: newGenerationScheduler(owner.scheduler, command.session.Done()), ctx: generationCtx, cancel: cancel}
+				generation = &ownerGenerationState{id: command.generation, session: command.session, scheduler: newGenerationScheduler(owner.scheduler, command.session.Done()), ctx: generationCtx, cancel: cancel, watchDone: make(chan struct{})}
 				ownership = ownerOwnershipActive
 				snapshot.Health = ownerHealthHealthy
-				go owner.watchGeneration(generation.id, command.session.Done())
+				go owner.watchGeneration(generation)
 				if takeoverReply != nil {
 					takeoverReply <- nil
 				}
@@ -696,7 +701,7 @@ func (owner *deviceOwner) loop() {
 				var validationReply chan error
 				terminalErr := ErrOwnershipUncertain
 				ownership = ownerOwnershipUncertain
-				if session, ok := generation.session.(interface{ RecognizedTakeover() bool }); ok && session.RecognizedTakeover() {
+				if recognizedTakeover(generation.session) {
 					terminalErr = ErrSessionTakenOver
 					ownership = ownerOwnershipTakenOver
 				}
@@ -710,6 +715,15 @@ func (owner *deviceOwner) loop() {
 				if validationReply != nil {
 					validationReply <- classifyOperationError(terminalErr, ToolOutcomeFailed)
 				}
+			}
+
+		case ownerTakeoverRecognized:
+			if cleanup != nil && cleanup.generation.id == command.generation && cleanup.err == nil && cleanup.reply == nil && !stopping {
+				ownership = ownerOwnershipTakenOver
+				cleanup.target = ownerOwnershipTakenOver
+				snapshot.Health = ownerHealthDegraded
+				failQueued(ownerResult{err: classifyOperationError(ErrSessionTakenOver, ToolOutcomeNotSent)})
+				publish()
 			}
 
 		case ownerIdleExpired:
@@ -742,6 +756,9 @@ func (owner *deviceOwner) loop() {
 				target := cleanup.target
 				reply := cleanup.reply
 				takeoverReply := cleanup.takeoverReply
+				if cleanup.generation.watchDone != nil {
+					close(cleanup.generation.watchDone)
+				}
 				cleanup = nil
 				ownership = target
 				snapshot.Health = ownerHealthUnavailable
@@ -1004,7 +1021,7 @@ func classifyTerminalCompletion(session Session, class ownerOperationClass, err 
 		outcome = ToolOutcomeUnknown
 	}
 	terminalErr := ErrOwnershipUncertain
-	if takeover, ok := connected.(interface{ RecognizedTakeover() bool }); ok && takeover.RecognizedTakeover() {
+	if recognizedTakeover(connected) {
 		terminalErr = ErrSessionTakenOver
 	}
 	return classifyOperationError(terminalErr, outcome)
@@ -1015,13 +1032,33 @@ func recognizedTakeover(session ConnectedSession) bool {
 	return ok && takeover.RecognizedTakeover()
 }
 
-func (owner *deviceOwner) watchGeneration(generation uint64, done <-chan struct{}) {
-	if done == nil {
+func takeoverSignal(session ConnectedSession) <-chan struct{} {
+	takeover, ok := session.(interface{ TakeoverDetected() <-chan struct{} })
+	if !ok {
+		return nil
+	}
+	return takeover.TakeoverDetected()
+}
+
+func (owner *deviceOwner) watchGeneration(generation *ownerGenerationState) {
+	if generation == nil || generation.session.Done() == nil {
 		return
 	}
+	takeover := takeoverSignal(generation.session)
 	select {
-	case <-done:
-		owner.send(ownerGenerationEnded{generation: generation})
+	case <-takeover:
+		owner.send(ownerGenerationEnded{generation: generation.id})
+	case <-generation.session.Done():
+		owner.send(ownerGenerationEnded{generation: generation.id})
+		if takeover == nil {
+			return
+		}
+		select {
+		case <-takeover:
+			owner.send(ownerTakeoverRecognized{generation: generation.id})
+		case <-generation.watchDone:
+		case <-owner.done:
+		}
 	case <-owner.done:
 	}
 }

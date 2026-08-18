@@ -84,6 +84,7 @@ func (connector *WebRTCConnector) connect(ctx context.Context, device DeviceConf
 	connectedCtx, cancel := context.WithCancel(context.Background())
 	connected := &connectedSession{
 		ctx: connectedCtx, cancel: cancel, httpClient: httpClient, baseURL: device.BaseURL,
+		takeoverDetected: make(chan struct{}),
 	}
 	if profile == SessionProfileVideo {
 		connected.video = newVideoReceiver()
@@ -203,13 +204,15 @@ type connectedSession struct {
 	baseURL    url.URL
 	video      *videoReceiver
 
-	closeOnce    sync.Once
-	pumpsDone    chan struct{}
-	pumpMu       sync.Mutex
-	pumps        sync.WaitGroup
-	closed       bool
-	trackStarted bool
-	takenOver    atomic.Bool
+	closeOnce        sync.Once
+	pumpsDone        chan struct{}
+	pumpMu           sync.Mutex
+	pumps            sync.WaitGroup
+	closed           bool
+	trackStarted     bool
+	takenOver        atomic.Bool
+	takeoverOnce     sync.Once
+	takeoverDetected chan struct{}
 }
 
 func (session *connectedSession) recognizeTakeover() {
@@ -217,11 +220,23 @@ func (session *connectedSession) recognizeTakeover() {
 		return
 	}
 	session.takenOver.Store(true)
+	session.takeoverOnce.Do(func() {
+		if session.takeoverDetected != nil {
+			close(session.takeoverDetected)
+		}
+	})
 	session.cancel()
 }
 
 func (session *connectedSession) RecognizedTakeover() bool {
 	return session != nil && session.takenOver.Load()
+}
+
+func (session *connectedSession) TakeoverDetected() <-chan struct{} {
+	if session == nil {
+		return nil
+	}
+	return session.takeoverDetected
 }
 
 func (session *connectedSession) SuppressHIDCleanup() bool {

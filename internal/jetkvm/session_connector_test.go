@@ -58,6 +58,20 @@ func (session *deterministicConnectedSession) Close(ctx context.Context) error {
 	return nil
 }
 
+type lateTakeoverSession struct {
+	*deterministicConnectedSession
+	takeover   chan struct{}
+	recognized atomic.Bool
+}
+
+func (session *lateTakeoverSession) RecognizedTakeover() bool          { return session.recognized.Load() }
+func (session *lateTakeoverSession) TakeoverDetected() <-chan struct{} { return session.takeover }
+
+func (session *lateTakeoverSession) recognizeTakeover() {
+	session.recognized.Store(true)
+	close(session.takeover)
+}
+
 func TestRecognizedTakeoverLatchesAndRejectsOrdinaryReconnect(t *testing.T) {
 	base, _ := url.Parse("https://jetkvm.invalid")
 	session := &deterministicConnectedSession{
@@ -91,6 +105,57 @@ func TestRecognizedTakeoverLatchesAndRejectsOrdinaryReconnect(t *testing.T) {
 	}
 	if connector.calls != 1 {
 		t.Fatalf("ordinary work after takeover opened %d connections", connector.calls)
+	}
+}
+
+func TestRecognizedTakeoverWinsWhenLossWasProcessedFirst(t *testing.T) {
+	base, _ := url.Parse("https://jetkvm.invalid")
+	session := &lateTakeoverSession{
+		deterministicConnectedSession: &deterministicConnectedSession{
+			fakeSession: &fakeSession{results: map[string]any{methodPing: "pong"}},
+			lost:        make(chan struct{}), closeStart: make(chan struct{}), closeDone: make(chan struct{}),
+		},
+		takeover: make(chan struct{}),
+	}
+	connector := sessionConnectorFunc(func(context.Context, DeviceConfig) (ConnectedSession, error) {
+		return session, nil
+	})
+	manager, err := NewManager([]DeviceConfig{{Name: "lab", BaseURL: *base}}, connector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		close(session.closeDone)
+		_ = manager.Close(context.Background())
+	})
+	if _, err := manager.DebugRPC(context.Background(), "lab", methodPing, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	close(session.lost)
+	select {
+	case <-session.closeStart:
+	case <-time.After(time.Second):
+		t.Fatal("terminal cleanup did not start")
+	}
+	deadline := time.After(time.Second)
+	for manager.owners["lab"].Snapshot().Ownership != ownerOwnershipUncertain {
+		select {
+		case <-deadline:
+			t.Fatal("loss was not classified as ownership uncertainty")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	session.recognizeTakeover()
+	deadline = time.After(time.Second)
+	for manager.owners["lab"].Snapshot().Ownership != ownerOwnershipTakenOver {
+		select {
+		case <-deadline:
+			t.Fatal("late takeover recognition did not replace ownership uncertainty")
+		default:
+			time.Sleep(time.Millisecond)
+		}
 	}
 }
 
