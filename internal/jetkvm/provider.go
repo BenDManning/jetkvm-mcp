@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/BenDManning/jetkvm-mcp/internal/telemetry"
@@ -103,7 +104,7 @@ func (connector *WebRTCConnector) connect(ctx context.Context, device DeviceConf
 	if err != nil {
 		return nil, fmt.Errorf("%w: RPC data channel", ErrProtocol)
 	}
-	connected.rpc = newRPCSession(connectedCtx, channel, connector.options.RequestTimeout)
+	connected.rpc = newRPCSession(connectedCtx, channel, connector.options.RequestTimeout, connected.recognizeTakeover)
 	ready := make(chan struct{})
 	var readyOnce sync.Once
 	channel.OnOpen(func() { readyOnce.Do(func() { close(ready) }) })
@@ -208,6 +209,23 @@ type connectedSession struct {
 	pumps        sync.WaitGroup
 	closed       bool
 	trackStarted bool
+	takenOver    atomic.Bool
+}
+
+func (session *connectedSession) recognizeTakeover() {
+	if session == nil {
+		return
+	}
+	session.takenOver.Store(true)
+	session.cancel()
+}
+
+func (session *connectedSession) RecognizedTakeover() bool {
+	return session != nil && session.takenOver.Load()
+}
+
+func (session *connectedSession) SuppressHIDCleanup() bool {
+	return session.RecognizedTakeover()
 }
 
 func (session *connectedSession) handleConnectionState(state webrtc.PeerConnectionState) {

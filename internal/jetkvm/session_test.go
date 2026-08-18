@@ -63,6 +63,20 @@ func TestRPCSessionCorrelatesResultsAndMutationOmission(t *testing.T) {
 	}
 }
 
+func TestRPCSessionRecognizedTakeoverLatchesBeforeNotifying(t *testing.T) {
+	sender := &fakeTextSender{sent: make(chan string, 1)}
+	notified := make(chan struct{})
+	session := newRPCSession(context.Background(), sender, time.Second, func() { close(notified) })
+	defer session.Close()
+
+	session.HandleMessage([]byte(`{"jsonrpc":"2.0","method":"otherSessionConnected"}`))
+	select {
+	case <-notified:
+	default:
+		t.Fatal("recognized takeover was not delivered")
+	}
+}
+
 func TestRPCSessionReturnsStableErrorsAndTimeout(t *testing.T) {
 	t.Run("protocol error", func(t *testing.T) {
 		sender := &fakeTextSender{sent: make(chan string, 1)}

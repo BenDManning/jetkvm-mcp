@@ -362,6 +362,45 @@ func (manager *Manager) ReleaseSession(ctx context.Context, name string) (mcpser
 	return mcpserver.SessionReleaseResult{Device: device.Name, Status: mcpserver.SessionStatusReleased}, nil
 }
 
+func (manager *Manager) TakeOverSession(ctx context.Context, name string) (mcpserver.SessionTakeoverResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	device, err := manager.device(name)
+	if err != nil {
+		return mcpserver.SessionTakeoverResult{}, err
+	}
+	admission := manager.deviceAdmission[device.Name]
+	admission.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		admission.mu.Unlock()
+		return mcpserver.SessionTakeoverResult{}, classifyOperationError(err, ToolOutcomeNotSent)
+	}
+	if manager.closed.Load() {
+		admission.mu.Unlock()
+		return mcpserver.SessionTakeoverResult{}, classifyOperationError(ErrSessionClosed, ToolOutcomeNotSent)
+	}
+	if admission.lifecycle || admission.ordinary != 0 {
+		admission.mu.Unlock()
+		return mcpserver.SessionTakeoverResult{}, busyNotSent()
+	}
+	admission.lifecycle = true
+	admission.mu.Unlock()
+	defer func() {
+		admission.mu.Lock()
+		admission.lifecycle = false
+		admission.mu.Unlock()
+	}()
+	if !tryAcquire(manager.operations) {
+		return mcpserver.SessionTakeoverResult{}, busyNotSent()
+	}
+	defer release(manager.operations)
+	if err := manager.owners[device.Name].TakeOver(); err != nil {
+		return mcpserver.SessionTakeoverResult{}, err
+	}
+	return mcpserver.SessionTakeoverResult{Device: device.Name, Status: mcpserver.SessionStatusAuthoritative}, nil
+}
+
 func (manager *Manager) Status(ctx context.Context, name string) (mcpserver.Status, error) {
 	device, err := manager.device(name)
 	if err != nil {
