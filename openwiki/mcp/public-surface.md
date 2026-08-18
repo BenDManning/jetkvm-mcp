@@ -7,22 +7,22 @@ openwiki:
   roles: [domain, integration]
   change_kinds: [public-api, schema]
   source_paths: [internal/mcpserver/server.go, internal/mcpserver/controls.go, internal/mcpserver/testdata/tool-manifest.json, internal/jetkvm/manager.go]
-  symbols: [NewWithTelemetry, Device, addInputTool, addReadTool, addMutationTool]
-  test_paths: [internal/mcpserver/manifest_contract_test.go, internal/mcpserver/input_contract_test.go, internal/mcpserver/typed_results_test.go]
+  symbols: [NewWithTelemetry, Device, addInputTool, addReadTool, addMutationTool, TakeOverSessionToolName]
+  test_paths: [internal/mcpserver/manifest_contract_test.go, internal/mcpserver/input_contract_test.go, internal/mcpserver/typed_results_test.go, internal/mcpserver/takeover_session_test.go]
   invariants: [The static manifest and emitted structured output must match declared schemas across in-memory, stdio, and HTTP paths.]
   validation_commands: [go test ./internal/mcpserver]
 ---
 
 # Public MCP Tool Surface
 
-`mcpserver.NewWithTelemetry` registers a static 18-tool manifest. It advertises only `tools` capability and no tool-list change notifications. `internal/mcpserver/server.go` owns registration; `controls.go` owns control-family input/output schemas and validation. Each handler calls the `mcpserver.Device` boundary, implemented by `jetkvm.Manager`, which dispatches device work through the managed session lifecycle documented in [sessions and device protocol](../runtime/sessions-and-device-protocol.md).
+`mcpserver.NewWithTelemetry` registers a static 19-tool manifest. It advertises only `tools` capability and no tool-list change notifications. `internal/mcpserver/server.go` owns registration; `controls.go` owns control-family input/output schemas and validation. Each handler calls the `mcpserver.Device` boundary, implemented by `jetkvm.Manager`, which dispatches device work through the managed session lifecycle documented in [sessions and device protocol](../runtime/sessions-and-device-protocol.md).
 
 ## Tool families
 
 | Family | Tools | Owner / effect |
 | --- | --- | --- |
 | Discovery and observation | `jetkvm_list_devices`, `jetkvm_get_status`, `jetkvm_capture_screen`, `jetkvm_get_virtual_media_status` | List is config-only; the others open a session. Capture returns a fresh PNG plus metadata. |
-| Session lifecycle | `jetkvm_release_session` | An idempotent, non-destructive local ownership action: atomically closes this server's session resources so another authenticated operator can connect. It neither contacts a device from idle nor changes appliance/host state. See [session lifecycle](../runtime/sessions-and-device-protocol.md). |
+| Session lifecycle | `jetkvm_release_session`, `jetkvm_take_over_session` | Release is an idempotent, non-destructive local ownership action that closes this server's session resources and does not connect from idle. Takeover is a destructive, non-idempotent authority action that validates or acquires this server's operator session and can displace an external authenticated operator. Neither changes appliance/host state or replays earlier work. See [session lifecycle](../runtime/sessions-and-device-protocol.md). |
 | Keyboard and pointer | `jetkvm_keyboard`, `jetkvm_mouse` | HID mutations. Keyboard supports bounded US-ASCII `type_text` or a named/printable `press_key`; mouse supports absolute/relative movement, click, and scroll. |
 | Host power | `jetkvm_press_host_power_button`, `jetkvm_force_host_power_off`, `jetkvm_press_host_reset_button`, `jetkvm_turn_host_dc_power_on`, `jetkvm_turn_host_dc_power_off`, `jetkvm_wake_host_usb`, `jetkvm_wake_host_lan` | One physical consequence per named tool. LAN wake accepts only a configured target alias. |
 | Virtual media | `jetkvm_mount_virtual_media_url`, `jetkvm_mount_virtual_media_file`, `jetkvm_unmount_virtual_media`, `jetkvm_upload_virtual_media_file` | URL fetch or confined local upload/mount. See [virtual media](../runtime/virtual-media.md). |
@@ -33,17 +33,17 @@ Inputs are decoded against generated JSON Schema before handler invocation. Devi
 
 `ResultStatusCompleted` means the appliance RPC returned; `observed` identifies an observation result. Neither proves a later physical state. Virtual-media public state deliberately reveals only mounted state, source class (`http`/`storage`), and mode, never URL, path, filename, or raw firmware fields.
 
-Annotations communicate client-facing consequences: reads are read-only/idempotent; mutation tools are non-idempotent and commonly destructive. URL mounting is explicitly open-world because the appliance fetches the configured URL. They do not authorize a caller.
+Annotations communicate client-facing consequences: reads are read-only/idempotent; mutation tools are non-idempotent and commonly destructive. `jetkvm_take_over_session` is a mutation because it can displace an external operator even though it does not affect appliance/host state. URL mounting is explicitly open-world because the appliance fetches the configured URL. Annotations do not authorize a caller.
 
 ## Registration and schema pipeline
 
-`addReadTool` and `addMutationTool` are thin registrations that call `addInputTool` with a fixed mutation classifier: read tools classify false and mutation tools classify true. `jetkvm_release_session` is intentionally registered as a read because it has no appliance/host effect, although its `Device.ReleaseSession` handler performs local lifecycle work. `addInputTool` generates a JSON Schema from the Go input type when a tool did not supply one, bounds `device` and `target` properties to 1–128 code points, resolves defaults, and validates the schema before registering the SDK handler. It independently generates/resolves an output schema when absent. At call time it normalizes string device/target values, applies defaults, validates input, calls the handler, then marshals and validates output before populating `StructuredContent` and text content. This prevents a handler or provider from silently emitting a result outside the advertised schema.
+`addReadTool` and `addMutationTool` are thin registrations that call `addInputTool` with a fixed mutation classifier: read tools classify false and mutation tools classify true. `jetkvm_release_session` is intentionally registered as a read because it has no appliance/host effect, although its `Device.ReleaseSession` handler performs local lifecycle work. `jetkvm_take_over_session` uses `addMutationTool`: its `Device.TakeOverSession` handler may displace another authenticated operator, so it is neither read-only nor idempotent despite having no appliance/host effect. `addInputTool` generates a JSON Schema from the Go input type when a tool did not supply one, bounds `device` and `target` properties to 1–128 code points, resolves defaults, and validates the schema before registering the SDK handler. It independently generates/resolves an output schema when absent. At call time it normalizes string device/target values, applies defaults, validates input, calls the handler, then marshals and validates output before populating `StructuredContent` and text content. This prevents a handler or provider from silently emitting a result outside the advertised schema.
 
 The specialized control schemas encode operation-specific shapes: capture bounds are 1–3840 by 1–2160; keyboard has exclusive `type_text` or `press_key` branches and at most four unique modifiers; mouse branches require only the fields for their operation; media source values are bounded to 1–4096 characters. Output schemas constrain fixed action/operation/status values and capture MIME/dimensions. A capability change therefore needs an implementation behind `mcpserver.Device`, a named tool/registration and schemas, the manager dispatch, and a reviewed consumer-facing manifest update.
 
 ## Manifest compatibility seam
 
-`internal/mcpserver/testdata/tool-manifest.json` is the compatibility snapshot. `TestToolManifestContract` connects through in-memory, stdio subprocess, and stateless HTTP paths; it demands one exact manifest, sorted tools, schemas and annotations, schema-valid representative results, and tool errors as versioned content rather than JSON-RPC failures. It also checks no MCP session ID is used over HTTP. `release_session_test.go` separately proves the lifecycle tool's exact schema, annotations, routing, extra-input rejection, and classified errors. A deliberate manifest update uses:
+`internal/mcpserver/testdata/tool-manifest.json` is the compatibility snapshot. `TestToolManifestContract` connects through in-memory, stdio subprocess, and stateless HTTP paths; it demands one exact manifest, sorted tools, schemas and annotations, schema-valid representative results, and tool errors as versioned content rather than JSON-RPC failures. It also checks no MCP session ID is used over HTTP. `release_session_test.go` and `takeover_session_test.go` separately prove each lifecycle tool's exact schema, annotations, routing, and extra-input rejection; takeover's result is `status: authoritative`. A deliberate manifest update uses:
 
 ```sh
 make update-tool-manifest
