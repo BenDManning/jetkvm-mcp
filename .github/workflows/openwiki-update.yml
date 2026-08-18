@@ -41,6 +41,7 @@ jobs:
           echo "npm_config_cache=${RUNNER_TEMP}/npm-cache" >> "${GITHUB_ENV}"
           echo "npm_config_devdir=${RUNNER_TEMP}/node-gyp" >> "${GITHUB_ENV}"
           echo "XDG_CACHE_HOME=${RUNNER_TEMP}/xdg-cache" >> "${GITHUB_ENV}"
+          echo "GIT_CONFIG_GLOBAL=${RUNNER_TEMP}/gitconfig" >> "${GITHUB_ENV}"
           echo "${RUNNER_TEMP}/npm-global/bin" >> "${GITHUB_PATH}"
 
       - name: Install OpenWiki
