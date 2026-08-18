@@ -12,7 +12,7 @@ openwiki:
 
 # JetKVM MCP Wiki Quickstart
 
-JetKVM MCP is a single-process Go MCP server that controls configured JetKVM appliances. It serves 17 tools over stdio or stateless Streamable HTTP. A `jetkvm.Manager` maintains one resident, authenticated WebRTC session generation per device while demand exists, then closes it after its idle lease; it also requires FFmpeg for screenshot capture.
+JetKVM MCP is a single-process Go MCP server that controls configured JetKVM appliances. It serves 18 tools over stdio or stateless Streamable HTTP. A `jetkvm.Manager` maintains one resident, authenticated WebRTC session generation per device while demand exists, then closes it after its idle lease; `jetkvm_release_session` explicitly yields that local ownership for another operator. FFmpeg is required for screenshot capture.
 
 ## Start here
 
@@ -41,7 +41,7 @@ jetkvm-mcp --config config.yaml
 | --- | --- | --- | --- | --- | --- |
 | Add/change tool, schema, result, or annotation | [public surface](mcp/public-surface.md) | `internal/mcpserver/server.go`, `internal/mcpserver/controls.go` | `NewWithTelemetry`, `Device`, `addInputTool` | `manifest_contract_test.go`, `input_contract_test.go` | `go test ./internal/mcpserver` |
 | Change MCP revision, stdio, or HTTP behavior | [transports](mcp/transports-and-compatibility.md) | `internal/mcpserver/protocol_version.go`, `internal/mcpserver/transport.go`, `cmd/jetkvm-mcp/main.go` | `SupportedProtocolVersion`, `serveHTTP`, `run` | `protocol_version_test.go`, `origin_test.go`, `transport_test.go` | `go test ./internal/mcpserver ./cmd/jetkvm-mcp` |
-| Change resident session, connection, RPC, or scheduling | [sessions](runtime/sessions-and-device-protocol.md) | `internal/jetkvm/device_owner.go`, `provider.go`, `scheduling.go`, `rpc_session.go` | `deviceOwner`, `WebRTCConnector`, `generationScheduler`, `rpcSession` | `device_owner_test.go`, `scheduling_test.go`, `session_test.go` | `go test ./internal/jetkvm` |
+| Change resident session, explicit release, connection, RPC, or scheduling | [sessions](runtime/sessions-and-device-protocol.md) | `internal/jetkvm/manager.go`, `device_owner.go`, `provider.go`, `scheduling.go`, `rpc_session.go` | `Manager.ReleaseSession`, `deviceOwner`, `WebRTCConnector`, `generationScheduler`, `rpcSession` | `release_session_test.go`, `device_owner_test.go`, `scheduling_test.go`, `session_test.go` | `go test ./internal/jetkvm` |
 | Change power, HID, capture | [control and capture](runtime/control-and-capture.md) | `internal/jetkvm/manager.go`, `hid.go`, `capture.go`, `video*.go` | `Manager`, `CaptureScreen`, `scheduledSession` | `controls_manager_test.go`, `capture_test.go`, `video_test.go` | `go test ./internal/jetkvm ./internal/mcpserver` |
 | Change media upload/mount | [virtual media](runtime/virtual-media.md) | `internal/jetkvm/virtual_media.go` | `Manager.VirtualMedia`, `openMediaFile` | `virtual_media_test.go`, `virtual_media_fuzz_test.go` | `go test ./internal/jetkvm` |
 | Change config, auth, proxy, or session lease policy | [configuration](security/configuration.md), [sessions](runtime/sessions-and-device-protocol.md) | `internal/config/config.go`, `internal/mcpserver/transport.go`, `internal/jetkvm/manager.go` | `config.Load`, `Limits`, `trustedHostAndOrigin` | `config_test.go`, `privacy_test.go`, `admission_test.go` | `go test ./internal/config ./internal/jetkvm ./internal/mcpserver` |
@@ -58,5 +58,5 @@ For a mutation error with `outcome: unknown`, do **not** blindly retry: it may h
 
 ## Backlog
 
-- **Git history:** `/openwiki/.last-update.json` records `b8bf8b5e6261ee198ebae23d8e59796005fe454c`, but `.openwikiignore` restricts this run from inspecting the current Git range. No history-derived claim is recorded.
+- **Git history:** `/openwiki/.last-update.json` records `1a0124a37a83c9e77a52bc582a4d20141c82f3c0`, but `.openwikiignore` restricts this run from inspecting the current Git range. No history-derived claim is recorded.
 - **LangSmith observations:** no usable runtime-observation corpus was available beyond connection metadata, so no runtime-observation claim is recorded.
