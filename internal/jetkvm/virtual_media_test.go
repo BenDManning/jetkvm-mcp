@@ -450,6 +450,32 @@ func TestManagerVirtualMediaDeletesExistingCompleteBeforeFreshUpload(t *testing.
 	}
 }
 
+func TestManagerVirtualMediaPreservesConclusiveExistingFileDeleteRejection(t *testing.T) {
+	mediaDirectory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(mediaDirectory, "install.iso"), []byte("replacement ISO fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session := &fakeSession{results: map[string]any{
+		"listStorageFiles": map[string]any{"files": []map[string]any{{"filename": "install.iso", "size": 5}}},
+	}}
+	session.callHook = func(_ context.Context, method string, _ any) error {
+		if method == "deleteStorageFile" {
+			return classifyOperationError(errors.New("delete rejected"), ToolOutcomeFailed)
+		}
+		return nil
+	}
+	manager := mediaManager(t, session, mediaDirectory)
+	_, err := manager.VirtualMedia(context.Background(), "lab", mcpserver.VirtualMediaRequest{Operation: mcpserver.VirtualMediaMountFile, Source: "install.iso"})
+	var classified interface{ ToolErrorOutcome() string }
+	if !errors.As(err, &classified) || classified.ToolErrorOutcome() != ToolOutcomeFailed {
+		t.Fatalf("error = %#v, want conclusive failed outcome", err)
+	}
+	wantMethods := []string{"listStorageFiles", "deleteStorageFile"}
+	if got := calledMethods(session.calls); !reflect.DeepEqual(got, wantMethods) {
+		t.Fatalf("methods = %v, want %v", got, wantMethods)
+	}
+}
+
 func TestManagerVirtualMediaRejectsUnexpectedResumeOffsetAndAbortsUpload(t *testing.T) {
 	mediaDirectory := t.TempDir()
 	contents := []byte("new ISO fixture")

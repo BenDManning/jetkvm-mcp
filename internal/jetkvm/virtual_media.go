@@ -247,10 +247,10 @@ func discardExistingUploadArtifacts(ctx context.Context, session Session, filena
 		if !present[artifact] {
 			continue
 		}
-		mutated = true
 		if err := session.Call(ctx, "deleteStorageFile", map[string]any{"filename": artifact}, nil); err != nil {
 			return mutated, err
 		}
+		mutated = true
 	}
 	return mutated, nil
 }
