@@ -4,16 +4,39 @@ This directory keeps compact evidence about the observed JetKVM protocol boundar
 
 ## Ledger
 
-[`jetkvm-ledger.json`](jetkvm-ledger.json) records four distinct evidence classes:
+[`jetkvm-ledger.json`](jetkvm-ledger.json) records five distinct evidence classes:
 
 - `source_review` identifies the exact upstream commit whose relevant implementation was reviewed;
 - `source_drift` records a bounded comparison with another exact upstream commit and uses `review_required` when a reviewed surface differs;
-- `read_only_hardware` records the retained date, server revision, environment class, check names, result, and limitations of a device run; and
-- `managed_session_hardware` records physical WebRTC ownership and takeover observations against an exact application firmware version.
+- `read_only_hardware` records the retained date, server revision, environment class, check names, result, and limitations of a device run;
+- `managed_session_hardware` records physical WebRTC ownership and takeover observations against an exact application firmware version; and
+- `mutation_hardware` records a bounded negative observation from a standing-authorized mutation window. `observed_failure` is a compatibility limitation, not a positive qualification or a claim that the same failure affects other devices or firmware.
 
 An entry contains an exact JetKVM source reference when source was inspected, an exact server source reference, the product version when one was actually exercised, a date, a coarse environment class, fixed check names, a result, and explicit limitations. `not_observed`, `not_attributed`, and `not_retained` are evidence gaps, not wildcard compatibility.
 
 Credential values, session cookies, bearer tokens, and host-screen or media contents do not belong in this ledger. Device names, endpoints, firmware identity, and transport/event observations are not secret. A `pass` qualifies only the listed checks for the recorded combination. It never means that mocks or source inspection establish physical compatibility.
+
+## Observed HTTP mount limitation
+
+On 2026-08-19, the standing-authorized expendable fixture running JetKVM
+application 0.5.8 / system 0.2.8 fetched byte ranges from the approved media
+origin but returned an unknown outcome while mounting URL media. Explicit
+unmount recovered the partial media state. Local upload and mount passed in the
+same window. The exact JetKVM model and attached-host identity were not
+retained, so this observation neither qualifies nor disqualifies application
+0.5.8 generally.
+
+Review of the official application 0.5.8 source found that its browser and this
+client both call `mountWithHTTP` with `url` and `mode`. Firmware records HTTP
+media state before starting NBD and does not roll that state back when later NBD
+or USB attachment fails. The second retained range request can arise only after
+NBD startup, when firmware attaches `/dev/nbd0` to USB mass storage and the
+gadget reads its first block. Because attachment is the handler's last fallible
+step, the returned RPC error localizes the failure to that attachment rather
+than the HTTP response, requested mode, or RPC contract. The raw firmware error
+was not retained, so the lower-level attachment cause remains unknown and no
+evidence-backed client repair is available. Keep treating an unknown mount
+result as non-retryable and re-establish state independently.
 
 ## Focused source drift
 
