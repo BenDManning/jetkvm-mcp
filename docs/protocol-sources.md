@@ -25,6 +25,15 @@ human or browser and does not provide an approval handshake. Peer
 `Disconnected`, `Failed`, and `Closed` states are terminal in the inspected
 firmware; source review does not establish a same-generation recovery grace.
 
+Application release `0.5.8` resolves to upstream commit
+`df5dbea4310a03031ce72aa7222bfb68b0480fc6`. Its `web.go` and `jsonrpc.go`
+send the same parameterless `otherSessionConnected` JSON-RPC event as text
+before scheduling old-peer closure. A physical 0.5.8/system 0.2.8 rerun on
+2026-08-19 observed that ordering in 14 of 14 production sessions and classified
+13 of 13 in-flight capture takeovers as `session_taken_over`. The earlier two
+`ownership_uncertain` observations were not reproduced, so this evidence rules
+out a 0.5.8 wire-shape decoder change without weakening ambiguous-loss handling.
+
 JetKVM upstream is GPLv2. This project uses upstream source as protocol evidence and does not copy upstream implementation.
 
 The machine-checked reviewed-surface manifest, compact evidence ledger, and
