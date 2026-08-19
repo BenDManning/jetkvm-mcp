@@ -424,6 +424,32 @@ func TestManagerVirtualMediaDeletesUnverifiablePartialBeforeFreshUpload(t *testi
 	}
 }
 
+func TestManagerVirtualMediaDeletesExistingCompleteBeforeFreshUpload(t *testing.T) {
+	mediaDirectory := t.TempDir()
+	contents := []byte("replacement ISO fixture")
+	if err := os.WriteFile(filepath.Join(mediaDirectory, "install.iso"), contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session := &fakeSession{results: map[string]any{
+		"listStorageFiles":       map[string]any{"files": []map[string]any{{"filename": "install.iso", "size": 5}}},
+		"startStorageFileUpload": map[string]any{"alreadyUploadedBytes": 0, "dataChannel": "upload_12345678-1234-1234-1234-123456789abc"},
+	}}
+	manager := mediaManager(t, session, mediaDirectory)
+	result, err := manager.VirtualMedia(context.Background(), "lab", mcpserver.VirtualMediaRequest{Operation: mcpserver.VirtualMediaMountFile, Source: "install.iso"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCalls := []recordedCall{
+		{method: "listStorageFiles", params: nil},
+		{method: "deleteStorageFile", params: map[string]any{"filename": "install.iso"}},
+		{method: "startStorageFileUpload", params: map[string]any{"filename": "install.iso", "size": int64(len(contents))}},
+		{method: "mountWithStorage", params: map[string]any{"filename": "install.iso", "mode": "CDROM"}},
+	}
+	if result.Status != "completed" || !reflect.DeepEqual(session.calls, wantCalls) {
+		t.Fatalf("result=%+v calls=%#v want=%#v", result, session.calls, wantCalls)
+	}
+}
+
 func TestManagerVirtualMediaRejectsUnexpectedResumeOffsetAndAbortsUpload(t *testing.T) {
 	mediaDirectory := t.TempDir()
 	contents := []byte("new ISO fixture")
